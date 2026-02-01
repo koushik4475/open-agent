@@ -3,8 +3,7 @@
 <!-- Animated Banner -->
 <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=6,11,20&height=200&section=header&text=OpenAgent&fontSize=80&fontAlignY=35&animation=twinkling&fontColor=fff" width="100%"/>
 
-<!-- Typing Animation Title -->
-<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=32&duration=2800&pause=2000&color=00F7FF&center=true&vCenter=true&width=940&lines=🤖+Hybrid+AI+Agent+🚀;Offline+%2B+Online+Intelligence;Privacy+Meets+Power+⚡" alt="Typing SVG" /></a>
+
 
 <!-- Badges with Animation Effect -->
 <p align="center">
