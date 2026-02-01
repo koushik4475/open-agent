@@ -753,6 +753,28 @@ Theme: Cyberpunk / Dark
                 }
             }
 
+            async function sendMsg() {
+                const box = document.getElementById('prompt');
+                const text = box.value.trim();
+                if (!text) return;
+
+                box.value = '';
+                appendMsg('user', text);
+                showLoading();
+
+                try {
+                    const res = await fetch('http://localhost:5000/api/chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message: text })
+                    });
+                    const data = await res.json();
+                    appendMsg('agent', data.response || "Error: No response");
+                } catch (e) {
+                    appendMsg('agent', `⚠️ Error connecting to server: ${e.message}. Is python server.py running?`);
+                }
+            }
+
             // --- Particles ---
             const canvas = document.getElementById('particle-canvas');
             const ctx = canvas.getContext('2d');
