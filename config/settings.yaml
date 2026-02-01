@@ -6,7 +6,7 @@
 # ─── LLM (Ollama) ──────────────────────────────────────────────
 # ─── LLM (Configuration) ─────────────────────────────────────────
 llm:
-  provider: "openrouter"           # 'ollama', 'deepseek', or 'openrouter'
+  provider: "ollama"           # Switched to local due to 401 error
   # Ollama settings (Fallback):
   host: "http://localhost:11434"
   model: "phi3:mini"
@@ -14,9 +14,9 @@ llm:
   # OpenRouter Settings:
   api_key: "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"
   base_url: "https://openrouter.ai/api/v1"
-  cloud_model: "deepseek/deepseek-r1" # Valid OpenRouter model ID
+  cloud_model: "deepseek/deepseek-r1:free" # Use a reliable free/cheap model
   
-  timeout_seconds: 60              # Balanced timeout
+  timeout_seconds: 120             # Increased for CPU inference
   max_tokens: 2048                 # Response length cap
   temperature: 0.7
 
