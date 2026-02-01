@@ -1,0 +1,36 @@
+# ─── Core ───────────────────────────────────
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+pyyaml>=6.0.1
+pydantic>=2.0.0
+
+# ─── LLM / Embeddings ──────────────────────
+# Ollama is installed separately (see scripts/setup_models.sh)
+# sentence-transformers pulls torch automatically
+sentence-transformers>=2.2.2
+
+# ─── Vector DB ─────────────────────────────
+chromadb>=0.4.22
+
+# ─── File Parsing ──────────────────────────
+PyMuPDF>=1.23.0        # PDF → text (import as fitz)
+python-docx>=1.0.0     # DOCX → text
+
+# ─── Vision / OCR ──────────────────────────
+Pillow>=10.0.0
+pytesseract>=0.3.10
+# Tesseract binary must be installed OS-level:
+#   Ubuntu:  sudo apt install tesseract-ocr
+#   macOS:   brew install tesseract
+#   Windows: https://github.com/UB-Mannheim/tesseract/wiki
+
+# ─── Web Search ─────────────────────────────
+duckduckgo-search>=6.0.0
+
+# ─── Dev / Test ─────────────────────────────
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# ─── UI Server ──────────────────────────────
+flask>=3.0.0
+flask-cors>=4.0.0

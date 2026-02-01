@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+.env
+venv/
+*.egg-info/
+
+# Data (vector DB, logs)
+data/chroma_db/
+logs/*.log
+
+# OS
+.DS_Store
+Thumbs.db
