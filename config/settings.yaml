@@ -9,7 +9,7 @@ llm:
   provider: "ollama"           # Switched to local due to 401 error
   # Ollama settings (Fallback):
   host: "http://localhost:11434"
-  model: "phi3:mini"
+  model: "tinyllama"
   
   # OpenRouter Settings:
   api_key: "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"

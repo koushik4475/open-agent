@@ -8,6 +8,10 @@ venv/
 # Data (vector DB, logs)
 data/chroma_db/
 logs/*.log
+uploads/
+
+# Debug files
+debug_*.py
 
 # OS
 .DS_Store

@@ -52,13 +52,29 @@ class MemoryStore:
         )
 
         # Persistent client — data survives restarts
-        client = chromadb.PersistentClient(path=cfg.db_path)
+        try:
+            # Explicitly specify tenant and database to avoid "default_tenant" errors in newer Chroma versions
+            client = chromadb.PersistentClient(
+                path=cfg.db_path,
+                settings=chromadb.config.Settings(
+                    anonymized_telemetry=False,
+                    is_persistent=True
+                )
+            )
+        except Exception as e:
+            logger.error(f"Failed to create Chroma client: {e}")
+            raise
 
-        collection = client.get_or_create_collection(
-            name=cfg.collection_name,
-            embedding_function=embed_fn,
-            metadata={"hnsw:space": "cosine"},  # cosine similarity
-        )
+        try:
+            collection = client.get_or_create_collection(
+                name=cfg.collection_name,
+                embedding_function=embed_fn,
+                metadata={"hnsw:space": "cosine"},  # cosine similarity
+            )
+        except Exception as e:
+            logger.error(f"Failed to get/create collection: {e}")
+            # If default tenant fails, try to be even more explicit (some versions need this)
+            raise
 
         logger.info(
             f"Memory store initialized: {cfg.db_path} "
