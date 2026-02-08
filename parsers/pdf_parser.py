@@ -28,24 +28,22 @@ def extract_text(filepath: Path) -> str:
         raise FileNotFoundError(f"PDF not found: {filepath}")
 
     try:
-        doc = fitz.open(str(filepath))
-        pages: list[str] = []
+        with fitz.open(str(filepath)) as doc:
+            pages: list[str] = []
 
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            text = page.get_text("text")  # plain text extraction
-            if text.strip():
-                pages.append(f"--- Page {page_num + 1} ---\n{text.strip()}")
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                text = page.get_text("text")  # plain text extraction
+                if text.strip():
+                    pages.append(f"--- Page {page_num + 1} ---\n{text.strip()}")
 
-        doc.close()
+            if not pages:
+                logger.warning(f"No text extracted from {filepath}. May be image-based PDF.")
+                return "[PDF contains no extractable text. It may be scanned/image-based. Use OCR.]"
 
-        if not pages:
-            logger.warning(f"No text extracted from {filepath}. May be image-based PDF.")
-            return "[PDF contains no extractable text. It may be scanned/image-based. Use OCR.]"
-
-        full_text = "\n\n".join(pages)
-        logger.info(f"Extracted {len(full_text)} chars from {filepath.name} ({len(doc)} pages)")
-        return full_text
+            full_text = "\n\n".join(pages)
+            logger.info(f"Extracted {len(full_text)} chars from {filepath.name} ({len(doc)} pages)")
+            return full_text
 
     except Exception as e:
         logger.error(f"PDF extraction error: {e}")

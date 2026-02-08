@@ -3,7 +3,7 @@ import json
 
 url = "http://localhost:11434/api/generate"
 payload = {
-    "model": "phi3:mini",
+    "model": "tinyllama",
     "prompt": "hi",
     "options": {
         "temperature": 0.7,

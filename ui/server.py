@@ -112,7 +112,7 @@ def chat():
                 'response': 'Empty message received.'
             }), 400
         
-        # Run agent asynchronously
+        # Run agent
         async def process_message():
             # Use global variable inside this async scope
             global conversation_history
@@ -130,11 +130,9 @@ def chat():
             
             return response
         
-        # Execute async function
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        response = loop.run_until_complete(process_message())
-        loop.close()
+        # Execute async function using asyncio.run for cleaner loop management in 3.7+
+        # This is safer than manually creating and closing loops.
+        response = asyncio.run(process_message())
         
         return jsonify({
             'status': 'success',
@@ -175,10 +173,7 @@ def status():
                 'memory_db': str(agent.cfg.memory.db_path)
             }
         
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        status_data = loop.run_until_complete(get_status())
-        loop.close()
+        status_data = asyncio.run(get_status())
         
         return jsonify(status_data)
     
@@ -212,10 +207,7 @@ def tools():
                 })
             return tool_list
         
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        tools_data = loop.run_until_complete(get_tools())
-        loop.close()
+        tools_data = asyncio.run(get_tools())
         
         return jsonify({
             'status': 'success',
