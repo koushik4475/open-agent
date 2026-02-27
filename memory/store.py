@@ -87,7 +87,13 @@ class MemoryStore:
         """
         Embed and persist one interaction.
         Document = "user: ... | agent: ..." for retrieval coherence.
+        Skips trivial interactions to keep memory clean.
         """
+        # Don't store trivial/short interactions — they add noise
+        if len(user_input.strip()) < 10 or len(response.strip()) < 20:
+            logger.debug("Skipping trivial interaction (too short to be useful)")
+            return
+        
         doc = f"user: {user_input}\nagent: {response}"
         self._collection.add(
             documents=[doc],
@@ -113,15 +119,23 @@ class MemoryStore:
         results = self._collection.query(
             query_texts=[query],
             n_results=n,
+            include=["documents", "distances"],
         )
 
         docs = results.get("documents", [[]])[0]
+        distances = results.get("distances", [[]])[0]
         if not docs:
             return ""
 
-        # Format for injection
+        # Filter by similarity — only include relevant memories
+        # ChromaDB cosine distance: 0 = identical, 2 = opposite
+        # Threshold 0.8 = only reasonably similar memories
+        RELEVANCE_THRESHOLD = 0.8
         chunks = []
-        for i, doc in enumerate(docs, 1):
-            chunks.append(f"[Memory {i}]\n{doc}")
+        for i, (doc, dist) in enumerate(zip(docs, distances), 1):
+            if dist < RELEVANCE_THRESHOLD:
+                chunks.append(f"[Memory {i}]\n{doc}")
+            else:
+                logger.debug(f"Skipping memory {i} (distance={dist:.2f}, too far)")
 
         return "\n\n".join(chunks)

@@ -30,6 +30,20 @@ from openagent.config import settings
 
 logger = logging.getLogger("openagent.parsers.image")
 
+# Auto-detect Tesseract path on Windows
+import platform
+if platform.system() == "Windows":
+    import shutil
+    if not shutil.which("tesseract"):
+        # Common Windows install locations
+        for path in [
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        ]:
+            if Path(path).exists():
+                pytesseract.pytesseract.tesseract_cmd = path
+                break
+
 
 def extract_text(filepath: Path) -> str:
     """
