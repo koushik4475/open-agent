@@ -14,9 +14,23 @@ import logging
 import asyncio
 import requests
 
+import socket
+
 from openagent.config import settings
 
 logger = logging.getLogger("openagent.llm")
+
+
+def _quick_net_check() -> bool:
+    """Fast synchronous connectivity check (2 second timeout)."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        sock.connect(("8.8.8.8", 53))
+        sock.close()
+        return True
+    except Exception:
+        return False
 
 
 class LLMClient:
@@ -31,7 +45,7 @@ class LLMClient:
         self.provider = getattr(self.cfg, "provider", "ollama")
         
         # OpenRouter / DeepSeek Configuration
-        if self.provider in ["deepseek", "openrouter"]:
+        if self.provider in ["deepseek", "openrouter", "groq"]:
             self.base_url = getattr(self.cfg, "base_url", "https://openrouter.ai/api/v1")
             self.api_key = getattr(self.cfg, "api_key", "")
             # Use 'cloud_model' if available, else fall back to 'model'
@@ -40,7 +54,7 @@ class LLMClient:
             self.base_url = self.cfg.host.rstrip("/")
             self.model = self.cfg.model
 
-    async def generate(self, prompt: str, system: str | None = None) -> str:
+    async def generate(self, prompt: str, system: str | None = None, history: list[dict] | None = None) -> str:
         """
         Send a prompt, get a response string back.
         Runs the blocking HTTP call in a thread pool so we don't freeze
@@ -48,16 +62,19 @@ class LLMClient:
         """
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, self._do_generate, prompt, system
+            None, self._do_generate, prompt, system, history
         )
 
-    def _do_generate(self, prompt: str, system: str | None) -> str:
+    def _do_generate(self, prompt: str, system: str | None, history: list[dict] | None = None) -> str:
         """blocking HTTP call to LLM provider (Ollama or Cloud)."""
         
-        # Try primary provider first
-        if self.provider in ["deepseek", "openrouter"]:
+        if self.provider in ["deepseek", "openrouter", "groq"]:
+            # Quick connectivity check — skip cloud if offline (avoids 60s timeout)
+            if not _quick_net_check():
+                logger.warning("📡 No internet detected — using local Ollama directly")
+                return self._call_ollama(prompt, system)
             try:
-                return self._call_cloud_openai(prompt, system)
+                return self._call_cloud_openai(prompt, system, history)
             except Exception as e:
                 logger.error(f"Cloud provider ({self.provider}) failed: {e}")
                 logger.warning("🔄 FALLING BACK to local Ollama...")
@@ -65,15 +82,23 @@ class LLMClient:
         else:
             return self._call_ollama(prompt, system)
 
-    def _call_cloud_openai(self, prompt: str, system: str | None) -> str:
-        """Call OpenRouter/DeepSeek API (OpenAI compatible)."""
-        # Ensure base_url doesn't end with slash, then add endpoint
-        # BUT OpenRouter base needs to end with /api/v1 typically
+    def _call_cloud_openai(self, prompt: str, system: str | None, history: list[dict] | None = None) -> str:
+        """Call Groq/OpenRouter/DeepSeek API (OpenAI compatible)."""
         url = f"{self.base_url.rstrip('/')}/chat/completions"
         
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
+        
+        # Include conversation history for multi-turn context
+        if history:
+            # Take last 20 messages to stay within context limits
+            for msg in history[-20:]:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content})
+        
         messages.append({"role": "user", "content": prompt})
 
         # Ensure we send the headers for OpenRouter
@@ -111,7 +136,15 @@ class LLMClient:
         """Blocking HTTP POST to Ollama (Local Fallback)."""
         # Always use the local host/model for fallback
         local_host = getattr(self.cfg, "host", "http://localhost:11434")
-        local_model = getattr(self.cfg, "model", "phi3:mini") # The local one, not cloud one
+        local_model = getattr(self.cfg, "model", "phi3:mini")
+        
+        # Use a simpler system prompt for local models — they get confused by complex ones
+        simple_system = (
+            "You are OpenAgent, a helpful AI assistant. "
+            "Answer the user's question directly and concisely. "
+            "Do not make up conversations or reference past context unless asked. "
+            "For greetings, just greet back briefly."
+        )
         
         url = f"{local_host}/api/generate"
         
@@ -119,13 +152,12 @@ class LLMClient:
             "model": local_model,
             "prompt": prompt,
             "options": {
-                "temperature": self.cfg.temperature,
-                "num_predict": self.cfg.max_tokens,
+                "temperature": 0.5,  # Lower temperature for more focused responses
+                "num_predict": 512,  # Cap output length to prevent rambling
             },
             "stream": False,
         }
-        if system:
-            payload["system"] = system
+        payload["system"] = simple_system
 
         logger.info(f"Ollama call → model={local_model}, prompt_len={len(prompt)}")
 
@@ -159,7 +191,7 @@ class LLMClient:
     def is_available(self) -> bool:
         """Quick health-check."""
         try:
-            if self.provider in ["deepseek", "openrouter"]:
+            if self.provider in ["deepseek", "openrouter", "groq"]:
                 # OpenRouter check uses "GET /models" or similar
                 # Just check root or a known endpoint
                 url = self.base_url.rstrip("/") + "/models"

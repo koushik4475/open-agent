@@ -36,9 +36,9 @@
 ║                                                               ║
 ║   🧠 HYBRID AI AGENT - Best of Both Worlds                   ║
 ║                                                               ║
-║   ⚡ ONLINE  → DeepSeek (Complex Reasoning + Web Access)     ║
+║   ⚡ ONLINE  → Groq Llama 3.3 70B (ChatGPT-level, FREE)     ║
 ║   🔒 OFFLINE → Ollama Phi-3 (Privacy + Local Processing)     ║
-║   🎯 AUTO    → Intelligent Switching Based on Task           ║
+║   🎯 AUTO    → Intelligent Switching Based on Connectivity   ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
 ```
@@ -94,29 +94,36 @@
 </details>
 
 <details open>
-<summary><b>⚙️ Installation</b></summary>
+<summary><b>🔑 API Setup (FREE — No Credit Card Needed)</b></summary>
 
 <br>
 
-**Step 1: Clone the Repository**
-```bash
-git clone https://github.com/koushik4475/open-agent.git
-cd open-agent
+> **OpenAgent uses [Groq](https://groq.com) for high-quality AI responses. Groq is 100% FREE — no credit card required!**
+
+**Step 3: Get Your Free Groq API Key**
+
+1. Go to **[https://console.groq.com](https://console.groq.com)**
+2. Sign up with Google or email (no payment info needed)
+3. Navigate to **API Keys** → Click **Create API Key**
+4. Copy the key (starts with `gsk_...`)
+
+**Step 4: Paste Your API Key**
+
+Open `config/settings.yaml` and paste your key:
+
+```yaml
+llm:
+  provider: "groq"               # Uses Groq's free API
+  api_key: "gsk_YOUR_API_KEY_HERE"  # ← Paste your key here
+  base_url: "https://api.groq.com/openai/v1"
+  cloud_model: "llama-3.3-70b-versatile"
+  
+  # Offline Fallback (uses local Ollama when no internet)
+  host: "http://localhost:11434"
+  model: "phi3:mini"
 ```
 
-**Step 2: Install Dependencies**
-```bash
-pip install -r requirements.txt
-```
-
-**Step 3: Run Setup Script**
-```powershell
-# Windows
-.\scripts\setup_windows.ps1
-
-# Linux/Mac
-bash scripts/setup.sh
-```
+> ⚠️ **Never commit your API key to public repos!** Add `config/settings.yaml` to `.gitignore` for public projects.
 
 </details>
 
@@ -142,7 +149,7 @@ python ui/server.py
 ```mermaid
 graph TB
     A[🌐 Web UI - Flask] --> B{🤖 Agent Core}
-    B --> C[☁️ Cloud LLM<br/>DeepSeek via OpenRouter]
+    B --> C[☁️ Cloud LLM<br/>Groq Llama 3.3 70B]
     B --> D[🔒 Local LLM<br/>Ollama Phi-3]
     B --> E[🛠️ Tool Suite]
     
@@ -189,19 +196,23 @@ Edit `config/settings.yaml` to customize your experience:
 
 ```yaml
 llm:
-  # Primary Provider
-  provider: "openrouter"  # Options: "openrouter" or "ollama"
-  api_key: "your-openrouter-key-here"
-  cloud_model: "deepseek/deepseek-r1"
+  # Primary Provider (FREE)
+  provider: "groq"                         # Groq = free, fast, high quality
+  api_key: "gsk_YOUR_API_KEY_HERE"          # Get free at https://console.groq.com
+  base_url: "https://api.groq.com/openai/v1"
+  cloud_model: "llama-3.3-70b-versatile"   # 70B model — ChatGPT-level quality
   
-  # Local Fallback
+  # Local Fallback (when offline)
   host: "http://localhost:11434"
-  model: "phi3:mini"
+  model: "phi3:mini"                       # 3.8B model — runs on CPU
   
-  # Hybrid Settings
-  auto_fallback: true  # Automatic offline detection
-  max_retries: 3
+  # Tuning
+  timeout_seconds: 60
+  max_tokens: 2048
+  temperature: 0.7
 ```
+
+> 💡 **How it works:** OpenAgent auto-detects your internet connection in 2 seconds. Online → uses Groq (fast, smart). Offline → uses Ollama (private, local).
 
 ---
 
@@ -242,15 +253,14 @@ llm:
 
 <div align="center">
 
-```ascii
 ┌─────────────────────────────────────────────────────────┐
 │                    USER QUERY                           │
 └──────────────────┬──────────────────────────────────────┘
                    │
                    ▼
         ┌──────────────────────┐
-        │   Agent Analyzer     │
-        │  (Smart Routing)     │
+        │  Connectivity Check  │
+        │   (2 sec ping)       │
         └──────────┬───────────┘
                    │
          ┌─────────┴─────────┐
@@ -258,10 +268,11 @@ llm:
          ▼                   ▼
 ┌─────────────────┐  ┌─────────────────┐
 │  ONLINE MODE    │  │  OFFLINE MODE   │
-│  ☁️ DeepSeek    │  │  🔒 Ollama      │
-│  • Complex Q&A  │  │  • Privacy      │
-│  • Web Search   │  │  • Local Data   │
-│  • Latest Data  │  │  • Fast & Safe  │
+│  ☁️ Groq API    │  │  🔒 Ollama      │
+│  • Llama 70B    │  │  • Phi-3 Mini   │
+│  • Web Search   │  │  • Privacy      │
+│  • ChatGPT-lvl  │  │  • Fast & Safe  │
+│  • FREE ✅      │  │  • No Internet  │
 └─────────────────┘  └─────────────────┘
 ```
 

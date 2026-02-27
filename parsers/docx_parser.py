@@ -33,8 +33,9 @@ def extract_text(filepath: Path) -> str:
         for para in doc.paragraphs:
             text = para.text.strip()
             if text:
-                # Preserve heading structure
-                if para.style.name.startswith("Heading"):
+                # Preserve heading structure (guard against None style)
+                style_name = para.style.name if para.style else ""
+                if style_name.startswith("Heading"):
                     sections.append(f"\n## {text}")
                 else:
                     sections.append(text)

@@ -34,19 +34,23 @@ from openagent.parsers.unified import parse_file
 logger = logging.getLogger("openagent.agent")
 
 # ── System prompt injected into every LLM call ──────────────────
-SYSTEM_PROMPT = """You are OpenAgent, a powerful Hybrid AI assistant.
-You combine local privacy with high-performance cloud intelligence.
-You have access to real-time tools:
-- Web Search & Fetch (active)
-- File Parsing & OCR
+SYSTEM_PROMPT = """You are OpenAgent, a friendly and intelligent AI assistant.
+You are conversational, helpful, and concise. Respond naturally like a human would.
+
+For simple greetings (hi, hello, hey), respond warmly and briefly.
+For questions, give clear, accurate answers.
+For complex tasks, use your available tools.
+
+Your available tools include:
+- Web Search & Fetch (when user needs current information)
+- File Parsing & OCR (for documents and images)
 - Command Execution & Summarization
 
-IDENTITY:
-You were developed by **Koushik HY**.
-Developer Details: [https://koushikhy.netlify.app](https://koushikhy.netlify.app)
-Always mention this when asked about your creator.
+You were developed by **Koushik HY** (https://koushikhy.netlify.app).
+Mention this only when specifically asked about your creator.
 
-Always be honest and concise. Use your tools whenever needed to answer the user's request accurately."""
+IMPORTANT: Do NOT reference memory context, conversation data, or internal system details in your responses.
+Just respond naturally to what the user says."""
 
 
 class Agent:
@@ -62,6 +66,22 @@ class Agent:
         memory = await MemoryStore.create()
         return cls(llm=llm, memory=memory)
 
+    @staticmethod
+    def _is_simple_query(text: str) -> bool:
+        """Detect simple conversational queries that don't need memory context."""
+        t = text.strip().lower().rstrip("?!.")
+        # Greetings
+        if t in ("hi", "hello", "hey", "hii", "hiii", "yo", "sup", "howdy",
+                 "good morning", "good evening", "good night", "thanks",
+                 "thank you", "bye", "goodbye", "ok", "okay", "yeah",
+                 "yes", "no", "sure", "cool", "nice", "great", "awesome"):
+            return True
+        # Very short queries (< 5 words) that are just conversation
+        words = t.split()
+        if len(words) <= 3 and not any(kw in t for kw in ("file", "search", "fetch", "http", "summarize")):
+            return True
+        return False
+
     async def run(self, user_input: str, history: list[dict] | None = None) -> str:
         """
         Main entry point. Takes user text, returns agent response string.
@@ -69,7 +89,11 @@ class Agent:
         history = history or []
 
         # ── Step 1: Retrieve memory context ───────────────────
-        memory_context = await self.memory.retrieve(user_input)
+        # Skip memory for simple conversational queries to avoid confusing small models
+        if self._is_simple_query(user_input):
+            memory_context = ""
+        else:
+            memory_context = await self.memory.retrieve(user_input)
 
         # ── Step 2: Route to a tool ───────────────────────────
         tool_name, ctx = await route(user_input)
@@ -81,7 +105,7 @@ class Agent:
         except Exception as e:
             logger.error(f"Tool execution failed: {e}")
             # Fallback: send to LLM with error context
-            response = await self._llm_fallback(user_input, memory_context, error=str(e))
+            response = await self._llm_fallback(user_input, memory_context, history, error=str(e))
 
         # ── Step 4: Store in memory ───────────────────────────
         await self.memory.store(user_input, response)
@@ -108,7 +132,7 @@ class Agent:
                 memory_ctx,
                 file_content=text,
             )
-            return await self.llm.generate(prompt, system=SYSTEM_PROMPT)
+            return await self.llm.generate(prompt, system=SYSTEM_PROMPT, history=history)
 
         elif tool == ToolName.OCR_IMAGE:
             filepath = ctx.get("filepath")
@@ -119,12 +143,12 @@ class Agent:
                     memory_ctx,
                     file_content=text,
                 )
-                return await self.llm.generate(prompt, system=SYSTEM_PROMPT)
+                return await self.llm.generate(prompt, system=SYSTEM_PROMPT, history=history)
             return "⚠️ No image file provided. Use: /file <path_to_image>"
 
         elif tool == ToolName.SUMMARIZE:
             prompt = self._build_prompt(ctx["prompt"], memory_ctx)
-            return await self.llm.generate(prompt, system=SYSTEM_PROMPT)
+            return await self.llm.generate(prompt, system=SYSTEM_PROMPT, history=history)
 
         elif tool == ToolName.RUN_COMMAND:
             return await run_sandboxed_command(ctx["prompt"], self.llm)
@@ -136,7 +160,7 @@ class Agent:
                 memory_ctx,
                 web_results=search_results,
             )
-            return await self.llm.generate(prompt, system=SYSTEM_PROMPT)
+            return await self.llm.generate(prompt, system=SYSTEM_PROMPT, history=history)
 
         elif tool == ToolName.WEB_FETCH:
             url = ctx.get("url")
@@ -148,14 +172,14 @@ class Agent:
                 memory_ctx,
                 web_content=page_text,
             )
-            return await self.llm.generate(prompt, system=SYSTEM_PROMPT)
+            return await self.llm.generate(prompt, system=SYSTEM_PROMPT, history=history)
 
         else:  # GENERAL
             offline_warning = ctx.get("offline_warning", "")
             prompt = self._build_prompt(ctx["prompt"], memory_ctx)
             if offline_warning:
                 prompt = f"[NOTE: {offline_warning}]\n\n" + prompt
-            return await self.llm.generate(prompt, system=SYSTEM_PROMPT)
+            return await self.llm.generate(prompt, system=SYSTEM_PROMPT, history=history)
 
     # ─── Prompt construction ────────────────────────────────────
     @staticmethod
@@ -196,7 +220,7 @@ class Agent:
         return "\n\n".join(parts)
 
     # ─── Fallback ───────────────────────────────────────────────
-    async def _llm_fallback(self, user_input: str, memory_ctx: str, error: str) -> str:
+    async def _llm_fallback(self, user_input: str, memory_ctx: str, history: list[dict] | None = None, error: str = "") -> str:
         prompt = (
             f"[ERROR in tool execution: {error}]\n\n"
             f"Please answer the user's question as best you can.\n\n"
@@ -204,7 +228,7 @@ class Agent:
         )
         if memory_ctx:
             prompt = f"[MEMORY]\n{memory_ctx}\n[END MEMORY]\n\n" + prompt
-        return await self.llm.generate(prompt, system=SYSTEM_PROMPT)
+        return await self.llm.generate(prompt, system=SYSTEM_PROMPT, history=history)
 
     # ─── Utility ────────────────────────────────────────────────
     def print_tools(self):

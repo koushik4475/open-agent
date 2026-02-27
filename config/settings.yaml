@@ -3,21 +3,21 @@
 # Single source of truth. Edit here, code reads from here.
 # ================================================================
 
-# ─── LLM (Ollama) ──────────────────────────────────────────────
-# ─── LLM (Configuration) ─────────────────────────────────────────
+# ─── LLM (Groq — FREE, no credit card) ────────────────────────
 llm:
-  provider: "ollama"           # Switched to local due to 401 error
-  # Ollama settings (Fallback):
+  provider: "groq"               # groq = free cloud API, ollama = local fallback
+  
+  # Groq Settings (Primary — FREE):
+  api_key: "YOUR_GROQ_API_KEY_HERE"  # Get free at https://console.groq.com
+  base_url: "https://api.groq.com/openai/v1"
+  cloud_model: "llama-3.3-70b-versatile"
+  
+  # Ollama Settings (Offline Fallback):
   host: "http://localhost:11434"
-  model: "tinyllama"
+  model: "phi3:mini"
   
-  # OpenRouter Settings:
-  api_key: "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"
-  base_url: "https://openrouter.ai/api/v1"
-  cloud_model: "deepseek/deepseek-r1:free" # Use a reliable free/cheap model
-  
-  timeout_seconds: 120             # Increased for CPU inference
-  max_tokens: 2048                 # Response length cap
+  timeout_seconds: 60
+  max_tokens: 2048
   temperature: 0.7
 
 # ─── OCR (Tesseract) ───────────────────────────────────────────
