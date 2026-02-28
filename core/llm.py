@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import asyncio
+import base64
 import requests
 
 import socket
@@ -64,6 +65,70 @@ class LLMClient:
         return await loop.run_in_executor(
             None, self._do_generate, prompt, system, history
         )
+
+    async def analyze_image(self, image_path: str, prompt: str = "Describe this image in detail.") -> str:
+        """
+        Send an image to Groq's vision model for analysis.
+        Returns a description of the image contents (people, objects, scene, text).
+        """
+        import os
+        if not os.path.exists(image_path):
+            return f"⚠️ Image file not found: {image_path}"
+
+        # Read and base64-encode the image
+        with open(image_path, "rb") as f:
+            image_data = base64.b64encode(f.read()).decode("utf-8")
+
+        # Detect MIME type
+        ext = os.path.splitext(image_path)[1].lower()
+        mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".bmp": "image/bmp", ".tiff": "image/tiff", ".gif": "image/gif"}
+        mime_type = mime_map.get(ext, "image/jpeg")
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, self._call_vision_api, image_data, mime_type, prompt
+        )
+
+    def _call_vision_api(self, image_base64: str, mime_type: str, prompt: str) -> str:
+        """Blocking call to Groq's vision-capable model."""
+        if not _quick_net_check():
+            return "[VISION_OFFLINE] No internet — cannot analyze image with vision model."
+
+        vision_model = getattr(self.cfg, "vision_model", "llama-3.2-11b-vision-preview")
+        url = f"{self.base_url.rstrip('/')}/chat/completions"
+
+        messages = [
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {
+                    "url": f"data:{mime_type};base64,{image_base64}"
+                }}
+            ]}
+        ]
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": vision_model,
+            "messages": messages,
+            "temperature": 0.4,
+            "max_tokens": 1024,
+        }
+
+        logger.info(f"Vision API call → model={vision_model}")
+
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.error(f"Vision API error: {e}")
+            return f"[VISION_ERROR] Vision analysis failed: {e}"
 
     def _do_generate(self, prompt: str, system: str | None, history: list[dict] | None = None) -> str:
         """blocking HTTP call to LLM provider (Ollama or Cloud)."""

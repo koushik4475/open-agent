@@ -8,9 +8,10 @@ llm:
   provider: "groq"               # groq = free cloud API, ollama = local fallback
   
   # Groq Settings (Primary — FREE):
-  api_key: "YOUR_GROQ_API_KEY_HERE"  # Get free at https://console.groq.com
+  api_key: ""
   base_url: "https://api.groq.com/openai/v1"
   cloud_model: "llama-3.3-70b-versatile"
+  vision_model: "llama-3.2-11b-vision-preview"   # For image analysis (Groq free tier)
   
   # Ollama Settings (Offline Fallback):
   host: "http://localhost:11434"

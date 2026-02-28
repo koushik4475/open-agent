@@ -118,6 +118,7 @@ def chat():
             global conversation_history
             
             agent = await get_agent()
+            print(f"DEBUG CHAT: message='{user_message}'")
             response = await agent.run(user_message, conversation_history)
             
             # Update conversation history
@@ -219,6 +220,151 @@ def tools():
             'status': 'error',
             'message': f'Error getting tools: {str(e)}'
         }), 500
+
+
+@app.route('/api/analyze-image', methods=['POST'])
+def analyze_image():
+    """
+    Handle image upload and analysis via vision AI.
+    
+    Accepts a file upload, saves it, then runs the full
+    vision analysis pipeline (vision AI → web search → synthesis).
+    """
+    global conversation_history
+    
+    if 'file' not in request.files:
+        return jsonify({'status': 'error', 'response': 'No file uploaded'}), 400
+    
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'status': 'error', 'response': 'No file selected'}), 400
+    
+    try:
+        # Save the uploaded file
+        upload_dir = Path(os.getcwd()) / "uploads"
+        upload_dir.mkdir(exist_ok=True)
+        filepath = upload_dir / file.filename
+        file.save(filepath)
+        
+        # Run the analysis through the agent
+        async def do_analysis():
+            global conversation_history
+            agent = await get_agent()
+            
+            # Construct file tag for router
+            user_msg = f"Analyse this file: [FILE:{filepath.absolute()}]"
+            response = await agent.run(user_msg, conversation_history)
+            
+            # Update conversation history
+            conversation_history.append({"role": "user", "content": f"[Uploaded image: {file.filename}]"})
+            conversation_history.append({"role": "assistant", "content": response})
+            
+            if len(conversation_history) > 40:
+                conversation_history = conversation_history[-40:]
+            
+            return response
+        
+        response = asyncio.run(do_analysis())
+        
+        return jsonify({
+            'status': 'success',
+            'response': response,
+            'filename': file.filename
+        })
+    
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'response': f'Image analysis failed: {str(e)}'
+        }), 500
+
+
+@app.route('/api/settings', methods=['POST'])
+def update_settings():
+    """Update agent settings (project path for MCP)."""
+    data = request.get_json()
+    project_path = data.get('project_path', '')
+
+    from openagent.tools.offline.file_ops import set_project_path
+    set_project_path(project_path)
+
+    return jsonify({'status': 'success', 'project_path': project_path})
+
+
+@app.route('/api/export', methods=['POST'])
+def export_response():
+    """Export a response as PDF or DOCX with proper filenames."""
+    data = request.get_json()
+    text = data.get('text', '')
+    fmt = data.get('format', 'txt')
+
+    if not text:
+        return jsonify({'status': 'error', 'message': 'No text to export'}), 400
+
+    from flask import make_response
+    import io
+
+    if fmt == 'docx':
+        try:
+            from docx import Document
+            doc = Document()
+            doc.add_heading('OpenAgent Response', level=1)
+            for paragraph in text.split('\n'):
+                if paragraph.strip():
+                    doc.add_paragraph(paragraph)
+            buf = io.BytesIO()
+            doc.save(buf)
+            buf.seek(0)
+
+            response = make_response(buf.read())
+            response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.docx'
+            return response
+        except ImportError:
+            response = make_response(text.encode('utf-8'))
+            response.headers['Content-Type'] = 'text/plain; charset=utf-8'
+            response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.txt'
+            return response
+
+    elif fmt == 'pdf':
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib.units import inch
+
+            buf = io.BytesIO()
+            doc = SimpleDocTemplate(buf, pagesize=letter)
+            styles = getSampleStyleSheet()
+            story = []
+            story.append(Paragraph('OpenAgent Response', styles['Title']))
+            story.append(Spacer(1, 0.2 * inch))
+
+            for line in text.split('\n'):
+                if line.strip():
+                    safe = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    story.append(Paragraph(safe, styles['Normal']))
+                else:
+                    story.append(Spacer(1, 0.1 * inch))
+
+            doc.build(story)
+            buf.seek(0)
+
+            response = make_response(buf.read())
+            response.headers['Content-Type'] = 'application/pdf'
+            response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.pdf'
+            return response
+        except ImportError:
+            response = make_response(text.encode('utf-8'))
+            response.headers['Content-Type'] = 'text/plain; charset=utf-8'
+            response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.txt'
+            return response
+
+    else:
+        response = make_response(text.encode('utf-8'))
+        response.headers['Content-Type'] = 'text/plain; charset=utf-8'
+        response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.txt'
+        return response
 
 
 @app.route('/api/clear', methods=['POST'])
