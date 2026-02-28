@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import asyncio
+import base64
 import requests
 
 import socket
@@ -64,6 +65,70 @@ class LLMClient:
         return await loop.run_in_executor(
             None, self._do_generate, prompt, system, history
         )
+
+    async def analyze_image(self, image_path: str, prompt: str = "Describe this image in detail.") -> str:
+        """
+        Send an image to Groq's vision model for analysis.
+        Returns a description of the image contents (people, objects, scene, text).
+        """
+        import os
+        if not os.path.exists(image_path):
+            return f"⚠️ Image file not found: {image_path}"
+
+        # Read and base64-encode the image
+        with open(image_path, "rb") as f:
+            image_data = base64.b64encode(f.read()).decode("utf-8")
+
+        # Detect MIME type
+        ext = os.path.splitext(image_path)[1].lower()
+        mime_map = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                    ".bmp": "image/bmp", ".tiff": "image/tiff", ".gif": "image/gif"}
+        mime_type = mime_map.get(ext, "image/jpeg")
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, self._call_vision_api, image_data, mime_type, prompt
+        )
+
+    def _call_vision_api(self, image_base64: str, mime_type: str, prompt: str) -> str:
+        """Blocking call to Groq's vision-capable model."""
+        if not _quick_net_check():
+            return "[VISION_OFFLINE] No internet — cannot analyze image with vision model."
+
+        vision_model = getattr(self.cfg, "vision_model", "llama-3.2-11b-vision-preview")
+        url = f"{self.base_url.rstrip('/')}/chat/completions"
+
+        messages = [
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {
+                    "url": f"data:{mime_type};base64,{image_base64}"
+                }}
+            ]}
+        ]
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": vision_model,
+            "messages": messages,
+            "temperature": 0.4,
+            "max_tokens": 1024,
+        }
+
+        logger.info(f"Vision API call → model={vision_model}")
+
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            logger.error(f"Vision API error: {e}")
+            return f"[VISION_ERROR] Vision analysis failed: {e}"
 
     def _do_generate(self, prompt: str, system: str | None, history: list[dict] | None = None) -> str:
         """blocking HTTP call to LLM provider (Ollama or Cloud)."""
@@ -187,6 +252,84 @@ class LLMClient:
         except Exception as e:
             logger.error(f"LLM error: {e}")
             return f"⚠️  ERROR: {e}"
+
+    def stream_generate(self, prompt: str, system: str | None = None, history: list[dict] | None = None):
+        """
+        Streaming version of generate — yields tokens one at a time.
+        Used for SSE streaming to the browser for instant feel.
+        Falls back to non-streaming Ollama if cloud fails.
+        """
+        if self.provider in ["deepseek", "openrouter", "groq"]:
+            if not _quick_net_check():
+                logger.warning("📡 No internet — falling back to Ollama (non-streaming)")
+                yield self._call_ollama(prompt, system)
+                return
+            try:
+                yield from self._stream_cloud_openai(prompt, system, history)
+                return
+            except Exception as e:
+                logger.error(f"Cloud streaming failed: {e}")
+                logger.warning("🔄 FALLING BACK to local Ollama (non-streaming)...")
+                yield self._call_ollama(prompt, system)
+                return
+        else:
+            yield self._call_ollama(prompt, system)
+
+    def _stream_cloud_openai(self, prompt: str, system: str | None, history: list[dict] | None = None):
+        """Streaming call to Groq/OpenRouter — yields tokens as they arrive."""
+        url = f"{self.base_url.rstrip('/')}/chat/completions"
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+
+        if history:
+            for msg in history[-20:]:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content})
+
+        messages.append({"role": "user", "content": prompt})
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:5000",
+            "X-Title": "OpenAgent",
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.cfg.temperature,
+            "max_tokens": self.cfg.max_tokens,
+            "stream": True
+        }
+
+        logger.info(f"Cloud STREAM ({self.provider}) → model={self.model}")
+
+        resp = requests.post(
+            url, json=payload, headers=headers,
+            timeout=self.cfg.timeout_seconds, stream=True
+        )
+        resp.raise_for_status()
+
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str.strip() == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content", "")
+                    if content:
+                        yield content
+                except json.JSONDecodeError:
+                    continue
 
     def is_available(self) -> bool:
         """Quick health-check."""
