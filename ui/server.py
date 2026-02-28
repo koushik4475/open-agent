@@ -23,6 +23,7 @@ from openagent.core.agent import Agent
 from openagent.core.network import check_connectivity
 
 app = Flask(__name__, static_folder='.')
+app.config['MAX_CONTENT_LENGTH'] = 36 * 1024 * 1024  # 36 MB max upload size
 CORS(app)  # Enable CORS for local development
 
 # Setup logging

@@ -18,7 +18,7 @@ from pathlib import Path
 
 logger = logging.getLogger("openagent.tools.file_ops")
 
-MAX_READ_SIZE = 500_000   # ~500KB max per file read
+MAX_READ_SIZE = 36_700_160   # ~35MB max per file read
 MAX_LIST_DEPTH = 3
 MAX_LIST_FILES = 100
 
