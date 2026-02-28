@@ -1,0 +1,69 @@
+# ================================================================
+# openagent/config/settings.yaml
+# Single source of truth. Edit here, code reads from here.
+# ================================================================
+
+# ─── LLM (Groq — FREE, no credit card) ────────────────────────
+llm:
+  provider: "groq"               # groq = free cloud API, ollama = local fallback
+  
+  # Groq Settings (Primary — FREE):
+  api_key: "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"
+  base_url: "https://api.groq.com/openai/v1"
+  cloud_model: "llama-3.3-70b-versatile"
+  vision_model: "llama-3.2-11b-vision-preview"   # For image analysis (Groq free tier)
+  
+  # Ollama Settings (Offline Fallback):
+  host: "http://localhost:11434"
+  model: "phi3:mini"
+  
+  timeout_seconds: 60
+  max_tokens: 2048
+  temperature: 0.7
+
+# ─── OCR (Tesseract) ───────────────────────────────────────────
+ocr:
+  language: "eng"                  # Tesseract language code
+  # Add more: "eng+fra+deu" for multi-language
+  psm: 3                           # Page segmentation mode (3 = full page)
+
+# ─── Memory (ChromaDB) ─────────────────────────────────────────
+memory:
+  db_path: "./data/chroma_db"      # Persistent vector store on disk
+  collection_name: "agent_memory"
+  embedding_model: "all-MiniLM-L6-v2"  # 22 MB, 384-dim, CPU-friendly
+  max_context_chunks: 5            # How many past chunks to inject
+
+# ─── Web Search (DuckDuckGo) ───────────────────────────────────
+search:
+  max_results: 5
+  region: "wt-wt"                  # World / no region filter
+  safesearch: "moderate"
+  timeout_seconds: 15
+
+# ─── Sandboxed Command Execution ───────────────────────────────
+sandbox:
+  enabled: true
+  # Only these commands are allowed. Everything else is blocked.
+  allowed_commands:
+    - "echo"
+    - "date"
+    - "whoami"
+    - "ls"
+    - "cat"
+    - "wc"
+    - "pwd"
+    - "env"
+    - "python3"
+  max_execution_seconds: 10        # Kill after this many seconds
+
+# ─── Network ───────────────────────────────────────────────────
+network:
+  check_host: "8.8.8.8"           # Google DNS — just for connectivity ping
+  check_port: 53
+  check_timeout_seconds: 3
+
+# ─── Logging ───────────────────────────────────────────────────
+logging:
+  level: "INFO"                    # DEBUG | INFO | WARNING | ERROR
+  file: "./logs/openagent.log"
