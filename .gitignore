@@ -1,18 +1,17 @@
-# Python
-__pycache__/
-*.py[cod]
-.env
-venv/
-*.egg-info/
+# Secrets
+config/settings.yaml
 
-# Data (vector DB, logs)
-data/chroma_db/
-logs/*.log
+# Uploaded files (personal data)
 uploads/
 
-# Debug files
-debug_*.py
+# Database (too large for git)
+data/
 
-# OS
-.DS_Store
-Thumbs.db
+# Logs
+logs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.egg-info/
+.env

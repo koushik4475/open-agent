@@ -13,11 +13,16 @@ import json
 import logging
 import asyncio
 import base64
-import requests
-
 import socket
+import os
 
 from openagent.config import settings
+
+# This reads your key from HuggingFace Secrets (environment variable)
+# Falls back to settings.yaml if not found
+_api_key_from_env = os.environ.get("GROQ_API_KEY", "")
+if _api_key_from_env:
+    settings.llm.api_key = _api_key_from_env
 
 logger = logging.getLogger("openagent.llm")
 
@@ -44,11 +49,14 @@ class LLMClient:
     def __init__(self):
         self.cfg = settings.llm
         self.provider = getattr(self.cfg, "provider", "ollama")
-        
         # OpenRouter / DeepSeek Configuration
         if self.provider in ["deepseek", "openrouter", "groq"]:
             self.base_url = getattr(self.cfg, "base_url", "https://openrouter.ai/api/v1")
-            self.api_key = getattr(self.cfg, "api_key", "")
+            
+            # Security: Prioritize environment variable over config file
+            env_key = os.environ.get("GROQ_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
+            self.api_key = env_key or getattr(self.cfg, "api_key", "")
+            
             # Use 'cloud_model' if available, else fall back to 'model'
             self.model = getattr(self.cfg, "cloud_model", self.cfg.model)
         else:
