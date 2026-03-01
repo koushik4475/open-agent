@@ -1,3 +1,11 @@
+---
+title: Openagent
+emoji: ??
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+---
 <div align="center">
 
 <!-- Animated Banner -->
@@ -442,3 +450,4 @@ If you find OpenAgent useful, please consider:
 **🚀 Happy Coding! 🎉**
 
 </div>
+
