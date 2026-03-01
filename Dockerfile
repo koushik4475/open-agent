@@ -33,4 +33,4 @@ EXPOSE 7860
 ENV PORT=7860
 
 # Start the Flask server
-CMD ["python", "-m", "flask", "--app", "openagent/ui/server.py", "run", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["python", "-m", "flask", "--app", "ui/server.py", "run", "--host", "0.0.0.0", "--port", "7860"]
