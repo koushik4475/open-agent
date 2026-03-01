@@ -15,6 +15,7 @@ import asyncio
 import base64
 import socket
 import os
+import requests
 
 from openagent.config import settings
 
@@ -32,7 +33,7 @@ def _quick_net_check() -> bool:
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(2)
-        sock.connect(("8.8.8.8", 53))
+        sock.connect(("1.1.1.1", 443))
         sock.close()
         return True
     except Exception:
