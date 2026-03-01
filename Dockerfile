@@ -16,4 +16,4 @@ ENV PORT=7860
 
 EXPOSE 7860
 
-CMD ["python", "openagent/ui/server.py"]
+CMD ["python", "ui/server.py"]
