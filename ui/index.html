@@ -1190,6 +1190,104 @@
                 transform: translateX(-50%) translateY(0);
             }
         }
+
+        /* ═══ Mobile Navigation ═══ */
+        .mobile-menu-btn {
+            display: none;
+            background: transparent;
+            border: none;
+            color: var(--accent-cyan);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 4px;
+            margin-right: 12px;
+            border-radius: 4px;
+            transition: 0.2s;
+            line-height: 1;
+            box-shadow: none;
+        }
+
+        .mobile-menu-btn:hover {
+            background: rgba(0, 229, 255, 0.1);
+            color: #fff;
+        }
+
+        @media (max-width: 768px) {
+            .app-shell {
+                grid-template-columns: 1fr;
+                grid-template-rows: 56px 1fr;
+            }
+
+            .sidebar {
+                position: fixed;
+                top: 56px;
+                left: -100%;
+                width: 280px;
+                height: calc(100vh - 56px);
+                z-index: 1000;
+                transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                background: rgba(10, 21, 32, 0.98);
+                box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+                border-right: 1px solid var(--border-glow);
+                padding-bottom: 24px;
+            }
+
+            .sidebar.active-mobile {
+                left: 0;
+            }
+
+            .mobile-menu-btn {
+                display: block;
+            }
+
+            .status-bar {
+                display: none;
+            }
+
+            .chat-container {
+                padding: 16px;
+            }
+
+            .msg {
+                gap: 10px;
+                max-width: 100%;
+            }
+
+            .input-area {
+                padding: 12px 16px;
+            }
+
+            .tools-view,
+            .artifacts-view,
+            .history-view,
+            .settings-view,
+            .status-view {
+                padding: 16px;
+            }
+
+            .setting-row {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+            }
+
+            .setting-input {
+                width: 100%;
+            }
+
+            .card {
+                padding: 16px;
+            }
+
+            .corner {
+                display: none;
+            }
+
+            .bubble {
+                padding: 12px 14px;
+                font-size: 13px;
+            }
+        }
     </style>
 </head>
 
@@ -1212,6 +1310,7 @@
         <!-- Topbar -->
         <div class="topbar">
             <div class="logo">
+                <button class="mobile-menu-btn" onclick="toggleSidebar()">☰</button>
                 <div class="logo-icon">🤖</div>
                 <h1>OpenAgent</h1>
             </div>
@@ -1428,6 +1527,11 @@
     </div>
 
     <script>
+        function toggleSidebar() {
+            const sidebar = document.querySelector('.sidebar');
+            if (sidebar) sidebar.classList.toggle('active-mobile');
+        }
+
         // ═══════════════════════════════════════════════
         //  SETTINGS (localStorage)
         // ═══════════════════════════════════════════════
@@ -1482,6 +1586,13 @@
             });
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             if (event && event.target) event.target.classList.add('active');
+
+            if (window.innerWidth <= 768) {
+                const sidebar = document.querySelector('.sidebar');
+                if (sidebar && sidebar.classList.contains('active-mobile')) {
+                    sidebar.classList.remove('active-mobile');
+                }
+            }
         }
         function showTabDirect(id) {
             ALL_VIEWS.forEach(v => {
