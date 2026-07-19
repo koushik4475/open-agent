@@ -112,8 +112,6 @@ async def route(user_input: str) -> tuple[ToolName, dict]:
     text = user_input.strip()
     text_lower = text.lower()
 
-    print(f"DEBUG ROUTER: input='{text[:80]}...' raw_path={_extract_raw_path(text)}")
-
     # ── 1. Explicit file reference ────────────────────────────
     file_match = _FILE_PATTERN.search(text)
     if file_match:

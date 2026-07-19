@@ -8,8 +8,6 @@ from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 import asyncio
 import sys
-import sys
-print("DEBUG: Server script starting...")
 import os
 from pathlib import Path
 
@@ -127,7 +125,6 @@ def chat():
             history = conversation_sessions[session_id]
             
             agent = await get_agent()
-            print(f"DEBUG CHAT [{session_id}]: message='{user_message}'")
             response = await agent.run(user_message, history)
             
             # Update conversation history
