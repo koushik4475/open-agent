@@ -21,6 +21,7 @@ Why sentence-transformers (all-MiniLM-L6-v2):
 
 from __future__ import annotations
 import logging
+import os
 import uuid
 import time
 
@@ -51,11 +52,34 @@ class MemoryStore:
             model_name=cfg.embedding_model
         )
 
+        # Determine the effective DB path.
+        # On ephemeral hosts (e.g. HuggingFace Spaces) the container filesystem
+        # resets on rebuild/restart, so a relative cfg.db_path loses memory.
+        # HF persistent storage (when enabled on the Space) is mounted at /data.
+        # Priority: CHROMA_DB_PATH env → /data/chroma (if writable) → cfg.db_path.
+        if os.environ.get("CHROMA_DB_PATH"):
+            effective_path = os.environ["CHROMA_DB_PATH"]
+        elif os.path.isdir("/data") and os.access("/data", os.W_OK):
+            effective_path = "/data/chroma"
+        else:
+            effective_path = cfg.db_path
+
+        # Ensure the chosen directory exists; on failure fall back to cfg.db_path
+        # so a permission error can't crash startup.
+        try:
+            os.makedirs(effective_path, exist_ok=True)
+        except OSError as e:
+            logger.warning(
+                f"Could not create memory dir {effective_path}: {e}. "
+                f"Falling back to {cfg.db_path}"
+            )
+            effective_path = cfg.db_path
+
         # Persistent client — data survives restarts
         try:
             # Explicitly specify tenant and database to avoid "default_tenant" errors in newer Chroma versions
             client = chromadb.PersistentClient(
-                path=cfg.db_path,
+                path=effective_path,
                 settings=chromadb.config.Settings(
                     anonymized_telemetry=False,
                     is_persistent=True
@@ -77,7 +101,7 @@ class MemoryStore:
             raise
 
         logger.info(
-            f"Memory store initialized: {cfg.db_path} "
+            f"Memory store initialized: {effective_path} "
             f"| collection={cfg.collection_name} "
             f"| items={collection.count()}"
         )

@@ -16,6 +16,9 @@ chromadb>=0.4.22
 PyMuPDF>=1.23.0        # PDF → text (import as fitz)
 python-docx>=1.0.0     # DOCX → text
 
+# ─── Document Export ───────────────────────
+reportlab>=4.0.0       # response → PDF (with embedded Unicode font)
+
 # ─── Vision / OCR ──────────────────────────
 Pillow>=10.0.0
 pytesseract>=0.3.10
