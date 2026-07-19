@@ -318,6 +318,10 @@
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
             flex: 1;
             min-width: 0;
+            max-width: 100%;
+            /* Ensure long unbroken strings (URLs, non-Latin scripts like Kannada) wrap */
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }
 
         .msg.user {
@@ -340,6 +344,7 @@
         /* Response action bar */
         .response-actions {
             display: flex;
+            flex-wrap: wrap;
             gap: 6px;
             margin-top: 10px;
             padding-top: 8px;
@@ -495,6 +500,7 @@
 
         textarea {
             flex: 1;
+            min-width: 0;
             background: transparent;
             border: none;
             padding: 10px;
@@ -507,8 +513,9 @@
         }
 
         .send-btn {
-            width: 42px;
-            height: 42px;
+            width: 44px;
+            height: 44px;
+            flex-shrink: 0;
             border: none;
             background: linear-gradient(135deg, var(--accent-cyan), #0091ea);
             border-radius: 8px;
@@ -526,8 +533,9 @@
         }
 
         .attach-btn {
-            width: 42px;
-            height: 42px;
+            width: 44px;
+            height: 44px;
+            flex-shrink: 0;
             border: 1px solid var(--border-glow);
             background: transparent;
             border-radius: 8px;
@@ -933,6 +941,10 @@
             border-collapse: collapse;
             margin: 8px 0;
             width: 100%;
+            /* Let wide tables scroll inside the bubble instead of overflowing the page */
+            display: block;
+            max-width: 100%;
+            overflow-x: auto;
         }
 
         .bubble th,
@@ -1192,6 +1204,17 @@
         }
 
         /* ═══ Mobile Navigation ═══ */
+        /* Dimmed backdrop behind the off-canvas sidebar (mobile). Visibility is driven
+           purely by CSS from the sidebar's .active-mobile state, so no JS change is needed. */
+        .sidebar-overlay {
+            display: none;
+            position: fixed;
+            inset: 56px 0 0 0;
+            z-index: 900;
+            background: rgba(2, 10, 15, 0.6);
+            backdrop-filter: blur(2px);
+        }
+
         .mobile-menu-btn {
             display: none;
             background: transparent;
@@ -1236,6 +1259,10 @@
                 left: 0;
             }
 
+            .sidebar.active-mobile ~ .sidebar-overlay {
+                display: block;
+            }
+
             .mobile-menu-btn {
                 display: block;
             }
@@ -1244,8 +1271,13 @@
                 display: none;
             }
 
+            .topbar {
+                padding: 0 14px;
+            }
+
             .chat-container {
-                padding: 16px;
+                padding: 16px 12px;
+                gap: 14px;
             }
 
             .msg {
@@ -1253,8 +1285,23 @@
                 max-width: 100%;
             }
 
+            .avatar {
+                width: 30px;
+                height: 30px;
+                font-size: 14px;
+            }
+
             .input-area {
-                padding: 12px 16px;
+                padding: 10px 12px;
+            }
+
+            .resp-action-btn {
+                padding: 6px 12px;
+                font-size: 11px;
+            }
+
+            .attached-file-bar.visible {
+                padding: 8px 12px;
             }
 
             .tools-view,
@@ -1286,6 +1333,41 @@
             .bubble {
                 padding: 12px 14px;
                 font-size: 13px;
+            }
+        }
+
+        /* Extra-small phones: tighten typography and let action buttons flow full-width */
+        @media (max-width: 480px) {
+            .logo h1 {
+                font-size: 14px;
+                letter-spacing: 2px;
+            }
+
+            .chat-container {
+                padding: 12px 10px;
+            }
+
+            .msg {
+                gap: 8px;
+            }
+
+            .response-actions {
+                gap: 5px;
+            }
+
+            .resp-action-btn {
+                flex: 1 1 auto;
+                justify-content: center;
+                min-width: 60px;
+            }
+
+            .sidebar {
+                width: 88vw;
+                max-width: 300px;
+            }
+
+            textarea {
+                font-size: 14px;
             }
         }
     </style>
@@ -1353,6 +1435,9 @@
                 </div>
             </div>
         </div>
+
+        <!-- Mobile sidebar backdrop (tap to close). Reuses existing toggleSidebar(). -->
+        <div class="sidebar-overlay" onclick="toggleSidebar()"></div>
 
         <!-- Main -->
         <div class="main">

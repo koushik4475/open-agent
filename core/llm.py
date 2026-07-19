@@ -133,6 +133,7 @@ class LLMClient:
         try:
             resp = requests.post(url, json=payload, headers=headers, timeout=30)
             resp.raise_for_status()
+            resp.encoding = "utf-8"
             data = resp.json()
             return data["choices"][0]["message"]["content"].strip()
         except Exception as e:
@@ -197,8 +198,9 @@ class LLMClient:
             url, json=payload, headers=headers, timeout=self.cfg.timeout_seconds
         )
         resp.raise_for_status()
+        resp.encoding = "utf-8"
         data = resp.json()
-        
+
         # Handle different response structures if needed, but usually standard
         try:
             return data["choices"][0]["message"]["content"].strip()
@@ -240,6 +242,7 @@ class LLMClient:
                 url, json=payload, timeout=self.cfg.timeout_seconds
             )
             resp.raise_for_status()
+            resp.encoding = "utf-8"
             data = resp.json()
             return data.get("response", "").strip()
 
@@ -323,6 +326,7 @@ class LLMClient:
             timeout=self.cfg.timeout_seconds, stream=True
         )
         resp.raise_for_status()
+        resp.encoding = "utf-8"
 
         for line in resp.iter_lines(decode_unicode=True):
             if not line:
