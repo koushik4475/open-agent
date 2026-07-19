@@ -2161,6 +2161,56 @@
             let text = box.value.trim();
             if (!text && !pendingFileData) return;
 
+            // ── Slash commands: intercept before anything is sent to the LLM ──
+            if (text && text.charAt(0) === '/') {
+                const cmd = text.toLowerCase();
+                if (cmd === '/clear' || cmd === '/new') {
+                    // 1. Clear the chat DOM with a system bubble
+                    document.getElementById('chat').innerHTML = `
+                        <div class="msg agent">
+                            <div class="avatar agent">🤖</div>
+                            <div class="bubble">
+                                <span class="meta">OPENAGENT — SYSTEM</span>
+                                🧹 Conversation cleared.
+                            </div>
+                        </div>`;
+                    // 2. Reset stored messages for the current session
+                    if (chatSessions[currentSessionId]) {
+                        chatSessions[currentSessionId].messages = [];
+                        localStorage.setItem('openAgentSessions', JSON.stringify(chatSessions));
+                        renderHistory();
+                    }
+                    // 3. Reset server-side history (fire-and-forget)
+                    try {
+                        fetch('/api/clear', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ session_id: currentSessionId })
+                        });
+                    } catch (e) { /* ignore */ }
+                    // 4. Clear input and return early — do NOT send to the LLM
+                    box.value = '';
+                    return;
+                }
+                if (cmd === '/help') {
+                    const div = document.createElement('div');
+                    div.className = 'msg agent';
+                    div.innerHTML = `
+                        <div class="avatar agent">🤖</div>
+                        <div class="bubble">
+                            <span class="meta">OPENAGENT — SYSTEM</span>
+                            Available commands:<br>
+                            <code>/clear</code> — clear the current conversation<br>
+                            <code>/new</code> — start a fresh conversation<br>
+                            <code>/help</code> — show this help<br>
+                            You can also drop files into the chat to have them analyzed.
+                        </div>`;
+                    document.getElementById('chat').appendChild(div);
+                    box.value = '';
+                    return;
+                }
+            }
+
             // If there's a pending file, prepend file tag
             if (pendingFileData) {
                 const fileTag = `[FILE:${pendingFileData.filepath}]`;

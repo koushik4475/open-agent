@@ -9,6 +9,7 @@ from flask_cors import CORS
 import asyncio
 import sys
 import os
+import threading
 from pathlib import Path
 
 # Add parent directory of the project to path to support 'import openagent'
@@ -41,13 +42,19 @@ logger = logging.getLogger("server")
 # Global agent instance
 agent_instance = None
 conversation_sessions = {}  # Map session_id -> list of messages
+_agent_lock = threading.Lock()  # Guards lazy singleton init against concurrent requests
 
 
 async def get_agent():
     """Get or create the agent instance."""
     global agent_instance
+    # Double-checked locking: avoid taking the lock on the hot path once
+    # initialized, but ensure exactly one Agent (and one ChromaDB client)
+    # is built even under Flask's threaded server.
     if agent_instance is None:
-        agent_instance = await Agent.create()
+        with _agent_lock:
+            if agent_instance is None:
+                agent_instance = await Agent.create()
     return agent_instance
 
 
@@ -329,8 +336,9 @@ def analyze_image():
     Accepts a file upload, saves it, then runs the full
     vision analysis pipeline (vision AI → web search → synthesis).
     """
-    global conversation_history
-    
+    global conversation_sessions
+    session_id = request.form.get('session_id', 'default')
+
     if 'file' not in request.files:
         return jsonify({'status': 'error', 'response': 'No file uploaded'}), 400
     
@@ -347,20 +355,20 @@ def analyze_image():
         
         # Run the analysis through the agent
         async def do_analysis():
-            global conversation_history
             agent = await get_agent()
-            
+            history = conversation_sessions.setdefault(session_id, [])
+
             # Construct file tag for router
             user_msg = f"Analyse this file: [FILE:{filepath.absolute()}]"
-            response = await agent.run(user_msg, conversation_history)
-            
+            response = await agent.run(user_msg, history)
+
             # Update conversation history
-            conversation_history.append({"role": "user", "content": f"[Uploaded image: {file.filename}]"})
-            conversation_history.append({"role": "assistant", "content": response})
-            
-            if len(conversation_history) > 40:
-                conversation_history = conversation_history[-40:]
-            
+            history.append({"role": "user", "content": f"[Uploaded image: {file.filename}]"})
+            history.append({"role": "assistant", "content": response})
+
+            if len(history) > 40:
+                conversation_sessions[session_id] = history[-40:]
+
             return response
         
         response = asyncio.run(do_analysis())
@@ -429,20 +437,48 @@ def export_response():
         try:
             from reportlab.lib.pagesizes import letter
             from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
             from reportlab.lib.units import inch
+
+            # Register a Unicode font (Latin + Kannada) so non-Latin text
+            # renders instead of empty boxes. Load via an absolute path
+            # derived from this file's location so it works regardless of cwd.
+            title_style = None
+            body_style = None
+            try:
+                from reportlab.pdfbase import pdfmetrics
+                from reportlab.pdfbase.ttfonts import TTFont as RLTTFont
+
+                _FONT_PATH = Path(__file__).resolve().parent / "fonts" / "NotoSansKannada.ttf"
+                if "NotoKannada" not in pdfmetrics.getRegisteredFontNames():
+                    pdfmetrics.registerFont(RLTTFont("NotoKannada", str(_FONT_PATH)))
+
+                base_styles = getSampleStyleSheet()
+                title_style = ParagraphStyle(
+                    'NotoTitle', parent=base_styles['Title'], fontName="NotoKannada")
+                body_style = ParagraphStyle(
+                    'NotoBody', parent=base_styles['Normal'], fontName="NotoKannada")
+            except Exception:
+                # Font registration failed for any reason: fall back to the
+                # default styles so the PDF still generates (Latin only).
+                title_style = None
+                body_style = None
 
             buf = io.BytesIO()
             doc = SimpleDocTemplate(buf, pagesize=letter)
             styles = getSampleStyleSheet()
+            if title_style is None:
+                title_style = styles['Title']
+            if body_style is None:
+                body_style = styles['Normal']
             story = []
-            story.append(Paragraph('OpenAgent Response', styles['Title']))
+            story.append(Paragraph('OpenAgent Response', title_style))
             story.append(Spacer(1, 0.2 * inch))
 
             for line in text.split('\n'):
                 if line.strip():
                     safe = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                    story.append(Paragraph(safe, styles['Normal']))
+                    story.append(Paragraph(safe, body_style))
                 else:
                     story.append(Spacer(1, 0.1 * inch))
 
@@ -468,12 +504,14 @@ def export_response():
 
 @app.route('/api/clear', methods=['POST'])
 def clear_history():
-    """Clear conversation history."""
-    global conversation_history
-    conversation_history = []
+    """Clear conversation history for a session."""
+    global conversation_sessions
+    data = request.get_json(silent=True) or {}
+    session_id = data.get('session_id', 'default')
+    conversation_sessions[session_id] = []
     return jsonify({
         'status': 'success',
-        'message': 'Conversation history cleared.'
+        'message': 'Conversation cleared.'
     })
 
 
