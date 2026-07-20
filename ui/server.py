@@ -19,9 +19,12 @@ import os
 import threading
 from pathlib import Path
 
-# Add parent directory of the project to path to support 'import openagent'
+# Add parent directory of the project to path to support 'import openagent',
+# and this file's directory so sibling modules (export_templates) import
+# whether server.py runs as a script or is imported.
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 os.chdir(project_root)
 
 # Now import from the project
@@ -448,7 +451,12 @@ def update_settings():
 
 @app.route('/api/export', methods=['POST'])
 def export_response():
-    """Export a response as PDF or DOCX with proper filenames."""
+    """
+    Export a response as a branded PDF / DOCX / TXT download.
+    Rendering (OpenAgent header/footer, markdown-lite styling, Noto
+    Unicode font for non-Latin text) lives in export_templates; any
+    build failure degrades to a plain-text download instead of a 500.
+    """
     data = request.get_json()
     text = data.get('text', '')
     fmt = data.get('format', 'txt')
@@ -457,97 +465,41 @@ def export_response():
         return jsonify({'status': 'error', 'message': 'No text to export'}), 400
 
     from flask import make_response
-    import io
 
-    if fmt == 'docx':
+    def _txt_response():
         try:
-            from docx import Document
-            doc = Document()
-            doc.add_heading('OpenAgent Response', level=1)
-            for paragraph in text.split('\n'):
-                if paragraph.strip():
-                    doc.add_paragraph(paragraph)
-            buf = io.BytesIO()
-            doc.save(buf)
-            buf.seek(0)
-
-            response = make_response(buf.read())
-            response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-            response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.docx'
-            return response
-        except ImportError:
-            response = make_response(text.encode('utf-8'))
-            response.headers['Content-Type'] = 'text/plain; charset=utf-8'
-            response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.txt'
-            return response
-
-    elif fmt == 'pdf':
-        try:
-            from reportlab.lib.pagesizes import letter
-            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-            from reportlab.lib.units import inch
-
-            # Register a Unicode font (Latin + Kannada) so non-Latin text
-            # renders instead of empty boxes. Load via an absolute path
-            # derived from this file's location so it works regardless of cwd.
-            title_style = None
-            body_style = None
-            try:
-                from reportlab.pdfbase import pdfmetrics
-                from reportlab.pdfbase.ttfonts import TTFont as RLTTFont
-
-                _FONT_PATH = Path(__file__).resolve().parent / "fonts" / "NotoSansKannada.ttf"
-                if "NotoKannada" not in pdfmetrics.getRegisteredFontNames():
-                    pdfmetrics.registerFont(RLTTFont("NotoKannada", str(_FONT_PATH)))
-
-                base_styles = getSampleStyleSheet()
-                title_style = ParagraphStyle(
-                    'NotoTitle', parent=base_styles['Title'], fontName="NotoKannada")
-                body_style = ParagraphStyle(
-                    'NotoBody', parent=base_styles['Normal'], fontName="NotoKannada")
-            except Exception:
-                # Font registration failed for any reason: fall back to the
-                # default styles so the PDF still generates (Latin only).
-                title_style = None
-                body_style = None
-
-            buf = io.BytesIO()
-            doc = SimpleDocTemplate(buf, pagesize=letter)
-            styles = getSampleStyleSheet()
-            if title_style is None:
-                title_style = styles['Title']
-            if body_style is None:
-                body_style = styles['Normal']
-            story = []
-            story.append(Paragraph('OpenAgent Response', title_style))
-            story.append(Spacer(1, 0.2 * inch))
-
-            for line in text.split('\n'):
-                if line.strip():
-                    safe = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                    story.append(Paragraph(safe, body_style))
-                else:
-                    story.append(Spacer(1, 0.1 * inch))
-
-            doc.build(story)
-            buf.seek(0)
-
-            response = make_response(buf.read())
-            response.headers['Content-Type'] = 'application/pdf'
-            response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.pdf'
-            return response
-        except ImportError:
-            response = make_response(text.encode('utf-8'))
-            response.headers['Content-Type'] = 'text/plain; charset=utf-8'
-            response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.txt'
-            return response
-
-    else:
-        response = make_response(text.encode('utf-8'))
+            from export_templates import build_txt
+            payload = build_txt(text)
+        except Exception:
+            payload = text.encode('utf-8')
+        response = make_response(payload)
         response.headers['Content-Type'] = 'text/plain; charset=utf-8'
         response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.txt'
         return response
+
+    if fmt == 'docx':
+        try:
+            from export_templates import build_docx
+            response = make_response(build_docx(text))
+            response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.docx'
+            return response
+        except Exception:
+            logger.exception("DOCX export failed — falling back to TXT")
+            return _txt_response()
+
+    if fmt == 'pdf':
+        try:
+            from export_templates import build_pdf
+            response = make_response(build_pdf(text))
+            response.headers['Content-Type'] = 'application/pdf'
+            response.headers['Content-Disposition'] = 'attachment; filename=openagent_response.pdf'
+            return response
+        except Exception:
+            logger.exception("PDF export failed — falling back to TXT")
+            return _txt_response()
+
+    return _txt_response()
 
 
 @app.route('/api/clear', methods=['POST'])
