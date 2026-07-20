@@ -18,6 +18,9 @@ class LLMConfig(BaseModel):
     base_url: str = "http://localhost:11434"
     api_key: str = ""
     cloud_model: str = "deepseek/deepseek-r1:free"
+    # Vision model must exist on LLMConfig or Pydantic silently drops the
+    # YAML value and image analysis falls back to a hardcoded default.
+    vision_model: str = "qwen/qwen3.6-27b"
     model: str
     timeout_seconds: int
     max_tokens: int

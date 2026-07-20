@@ -11,14 +11,14 @@ llm:
   api_key: ""
   base_url: "https://api.groq.com/openai/v1"
   cloud_model: "llama-3.3-70b-versatile"
-  vision_model: "llama-3.2-11b-vision-preview"   # For image analysis (Groq free tier)
+  vision_model: "qwen/qwen3.6-27b"          # Current Groq multimodal model (3.2-vision-preview was decommissioned)
   
   # Ollama Settings (Offline Fallback):
   host: "http://localhost:11434"
   model: "phi3:mini"
   
   timeout_seconds: 60
-  max_tokens: 2048
+  max_tokens: 4096                 # Cloud response cap (Ollama has its own num_predict cap in code)
   temperature: 0.7
 
 # ─── OCR (Tesseract) ───────────────────────────────────────────

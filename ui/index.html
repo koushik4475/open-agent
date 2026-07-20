@@ -9,6 +9,9 @@
         href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&display=swap"
         rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/highlight.min.js"></script>
     <style>
         *,
         *::before,
@@ -1203,6 +1206,152 @@
             }
         }
 
+        /* ═══ Markdown extras ═══ */
+        .bubble a {
+            color: var(--accent-cyan);
+            text-decoration: none;
+            border-bottom: 1px dotted rgba(0, 229, 255, 0.5);
+            word-break: break-all;
+        }
+
+        .bubble a:hover {
+            border-bottom-style: solid;
+        }
+
+        .bubble img {
+            max-width: 100%;
+            border-radius: 8px;
+        }
+
+        .bubble hr {
+            border: none;
+            border-top: 1px solid var(--border-glow);
+            margin: 10px 0;
+        }
+
+        .bubble h4 {
+            font-size: 12px;
+        }
+
+        .bubble td {
+            overflow-wrap: anywhere;
+        }
+
+        .bubble tr:nth-child(even) td {
+            background: rgba(0, 229, 255, 0.03);
+        }
+
+        .bubble blockquote {
+            background: rgba(0, 229, 255, 0.04);
+            border-radius: 0 8px 8px 0;
+            padding: 6px 12px;
+        }
+
+        /* highlight.js theme fits inside our wrapper: kill its own bg/padding */
+        .code-block-wrapper pre code.hljs {
+            background: transparent;
+            padding: 0;
+        }
+
+        /* ═══ Stop-generation state of the send button ═══ */
+        .send-btn.stop {
+            background: linear-gradient(135deg, #ff5252, #d50000);
+            color: #fff;
+        }
+
+        /* ═══ Jump-to-bottom pill ═══ */
+        .jump-pill {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            bottom: 86px;
+            z-index: 50;
+            display: none;
+            align-items: center;
+            gap: 6px;
+            background: var(--bg-card);
+            border: 1px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+            border-radius: 20px;
+            padding: 6px 14px;
+            font-family: 'Share Tech Mono';
+            font-size: 11px;
+            cursor: pointer;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            transition: 0.2s;
+        }
+
+        .jump-pill.visible {
+            display: inline-flex;
+        }
+
+        .jump-pill:hover {
+            background: var(--accent-cyan-dim);
+        }
+
+        /* ═══ Tools panel (dynamic) ═══ */
+        .tools-group-header {
+            grid-column: 1 / -1;
+            font-family: 'Share Tech Mono';
+            font-size: 11px;
+            letter-spacing: 2px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            padding: 6px 2px 4px;
+            border-bottom: 1px solid var(--border-glow);
+        }
+
+        .tool-card.unavailable {
+            opacity: 0.45;
+            cursor: default;
+        }
+
+        .tool-card.unavailable:hover {
+            transform: none;
+            border-color: var(--border-glow);
+            box-shadow: none;
+        }
+
+        .badge-online {
+            color: var(--accent-cyan);
+            background: var(--accent-cyan-dim);
+            border-color: rgba(0, 229, 255, 0.3);
+        }
+
+        .badge-off {
+            color: #ff8a80;
+            background: rgba(244, 67, 54, 0.1);
+            border-color: rgba(244, 67, 54, 0.3);
+        }
+
+        .tools-empty {
+            grid-column: 1 / -1;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        /* ═══ Error toast variant ═══ */
+        .toast-error {
+            border-color: #f44336;
+            color: #ff8a80;
+        }
+
+        /* ═══ Reduced motion ═══ */
+        @media (prefers-reduced-motion: reduce) {
+
+            .logo-icon,
+            .drop-overlay .drop-icon,
+            .analyzing-badge,
+            .typing span,
+            .msg {
+                animation: none;
+            }
+
+            .chat-container {
+                scroll-behavior: auto;
+            }
+        }
+
         /* ═══ Mobile Navigation ═══ */
         /* Dimmed backdrop behind the off-canvas sidebar (mobile). Visibility is driven
            purely by CSS from the sidebar's .active-mobile state, so no JS change is needed. */
@@ -1590,6 +1739,9 @@
                 </div>
             </div>
 
+            <!-- Jump-to-bottom pill (appears when new content arrives while scrolled up) -->
+            <button class="jump-pill" id="jump-pill" onclick="jumpToBottom()">⬇ New messages</button>
+
             <!-- Attached file bar (shows after drop, before processing) -->
             <div class="attached-file-bar" id="attached-file-bar">
                 <div class="attached-file-chip" id="attached-chip"></div>
@@ -1605,7 +1757,7 @@
                         title="Upload file (or drag & drop)">📎</button>
                     <textarea id="prompt" placeholder="Type a message or command..."
                         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
-                    <button class="send-btn" onclick="sendMsg()">➤</button>
+                    <button class="send-btn" id="send-btn" title="Send" onclick="handleSendClick()">➤</button>
                 </div>
             </div>
         </div>
@@ -1671,6 +1823,8 @@
             });
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             if (event && event.target) event.target.classList.add('active');
+            if (id !== 'chat') hideJumpPill();
+            if (id === 'tools') loadTools();
 
             if (window.innerWidth <= 768) {
                 const sidebar = document.querySelector('.sidebar');
@@ -1686,6 +1840,7 @@
                 if (v === 'chat') { el.style.display = (id === 'chat') ? 'flex' : 'none'; }
                 else { el.classList.toggle('active', id === v); }
             });
+            if (id !== 'chat') hideJumpPill();
         }
         function quickAction(text) {
             showTabDirect('chat');
@@ -1697,28 +1852,84 @@
         // ═══════════════════════════════════════════════
         //  MARKDOWN
         // ═══════════════════════════════════════════════
+        let markedConfigured = false;
         function renderMarkdown(text) {
             if (typeof marked === 'undefined') return text;
             try {
-                marked.setOptions({ breaks: true, gfm: true });
-                let html = marked.parse(text);
-                html = html.replace(
-                    /<pre><code(?:\s+class="language-(\w+)")?>(.*?)<\/code><\/pre>/gs,
-                    (m, lang, code) => {
-                        const l = lang || 'code';
-                        const id = 'c-' + Math.random().toString(36).substr(2, 6);
-                        return `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${l}</span><button class="code-copy-btn" onclick="copyCode('${id}',this)">📋 Copy</button></div><pre><code id="${id}" class="code-block-code">${code}</code></pre></div>`;
-                    }
-                );
-                return html;
+                if (!markedConfigured) { marked.setOptions({ breaks: true, gfm: true }); markedConfigured = true; }
+                return marked.parse(text);
             } catch (e) { return text; }
         }
-        function copyCode(id, btn) {
-            const el = document.getElementById(id);
-            if (!el) return;
-            navigator.clipboard.writeText(el.innerText).then(() => {
-                btn.innerHTML = '✅ Copied!'; btn.classList.add('copied');
-                showToast('Code copied to clipboard!');
+
+        function escapeHtml(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // Post-process a rendered bubble: wrap code blocks with a language label +
+        // copy button, syntax-highlight them (skipped mid-stream for speed), and
+        // make links open in a new tab.
+        function enhanceBubble(root, opts) {
+            if (!root) return;
+            const highlight = !opts || opts.highlight !== false;
+            root.querySelectorAll('pre').forEach(pre => {
+                const code = pre.querySelector('code');
+                if (!code) return;
+                if (!(pre.parentElement && pre.parentElement.classList.contains('code-block-wrapper'))) {
+                    let lang = '';
+                    const m = (code.className || '').match(/language-([\w+-]+)/);
+                    if (m) lang = m[1];
+                    code.classList.add('code-block-code');
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'code-block-wrapper';
+                    const header = document.createElement('div');
+                    header.className = 'code-block-header';
+                    header.innerHTML =
+                        `<span class="code-block-lang">${escapeHtml(lang || 'code')}</span>` +
+                        `<button class="code-copy-btn" onclick="copyCodeBlock(this)">📋 Copy</button>`;
+                    pre.parentNode.insertBefore(wrapper, pre);
+                    wrapper.appendChild(header);
+                    wrapper.appendChild(pre);
+                }
+                if (highlight && typeof hljs !== 'undefined' && !code.dataset.hl) {
+                    try { hljs.highlightElement(code); code.dataset.hl = '1'; } catch (e) { /* ignore */ }
+                }
+            });
+            root.querySelectorAll('a[href]').forEach(a => {
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+            });
+        }
+
+        // Clipboard helper with legacy fallback; resolves to true on success.
+        function copyText(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                return navigator.clipboard.writeText(text).then(() => true).catch(() => legacyCopy(text));
+            }
+            return Promise.resolve(legacyCopy(text));
+        }
+        function legacyCopy(text) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                ta.remove();
+                return ok;
+            } catch (e) { return false; }
+        }
+
+        function copyCodeBlock(btn) {
+            const wrapper = btn.closest('.code-block-wrapper');
+            const code = wrapper ? wrapper.querySelector('pre code') : null;
+            if (!code) return;
+            copyText(code.innerText).then(ok => {
+                if (!ok) { showToast('Copy failed', 'error'); return; }
+                btn.innerHTML = '✅ Copied!';
+                btn.classList.add('copied');
                 setTimeout(() => { btn.innerHTML = '📋 Copy'; btn.classList.remove('copied'); }, 2000);
             });
         }
@@ -1807,9 +2018,29 @@
             appendMsgDOM(role, text);
         }
 
+        function buildActionBar() {
+            return `<div class="response-actions">
+                    <button class="resp-action-btn" onclick="copyResponse(this)">📋 Copy</button>
+                    <button class="resp-action-btn" onclick="exportTxt(this)">📄 TXT</button>
+                    <button class="resp-action-btn" onclick="exportDoc(this)">📝 DOCX</button>
+                    <button class="resp-action-btn" onclick="exportPdf(this)">📕 PDF</button>
+                    <button class="resp-action-btn" onclick="saveArtifact(this)">📦 Save</button>
+                </div>`;
+        }
+
+        // Resolve the raw markdown of the message a toolbar button belongs to.
+        function getRawFor(btn) {
+            if (btn) {
+                const msg = btn.closest('.msg');
+                if (msg && typeof msg.__raw === 'string') return msg.__raw;
+            }
+            return lastAgentResponse;
+        }
+
         function appendMsgDOM(role, text) {
             const div = document.createElement('div');
             div.className = `msg ${role}`;
+            div.__raw = text;
             const rendered = (role === 'agent') ? renderMarkdown(text) : text;
             const avatarEmoji = (role === 'agent') ? '🤖' : userSettings.avatar;
             const label = (role === 'agent') ? 'OPENAGENT' : userSettings.name.toUpperCase();
@@ -1817,13 +2048,7 @@
             let actionBar = '';
             if (role === 'agent' && text.length > 20 && !text.startsWith('<span class="analyzing')) {
                 lastAgentResponse = text;
-                actionBar = `<div class="response-actions">
-                    <button class="resp-action-btn" onclick="copyResponse(this)">📋 Copy</button>
-                    <button class="resp-action-btn" onclick="exportTxt()">📄 TXT</button>
-                    <button class="resp-action-btn" onclick="exportDoc()">📝 DOCX</button>
-                    <button class="resp-action-btn" onclick="exportPdf()">📕 PDF</button>
-                    <button class="resp-action-btn" onclick="saveArtifact()">📦 Save</button>
-                </div>`;
+                actionBar = buildActionBar();
             }
 
             div.innerHTML = `
@@ -1833,39 +2058,78 @@
                     ${rendered}
                     ${actionBar}
                 </div>`;
+            if (role === 'agent') enhanceBubble(div.querySelector('.bubble'));
             const container = document.getElementById('chat');
             container.appendChild(div);
             const loader = document.getElementById('loader');
             if (loader) loader.remove();
-            container.scrollTop = container.scrollHeight;
+            scrollChatToBottom(role === 'user');
         }
 
         function showLoading() {
             const div = document.createElement('div');
             div.id = 'loader'; div.className = 'msg agent';
-            div.innerHTML = `<div class="avatar agent">🤖</div><div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div>`;
+            div.innerHTML = `<div class="avatar agent">🤖</div><div class="bubble"><span class="meta">OPENAGENT — THINKING</span><div class="typing"><span></span><span></span><span></span></div></div>`;
             document.getElementById('chat').appendChild(div);
+            scrollChatToBottom(true);
+        }
+
+        // ═══════════════════════════════════════════════
+        //  SCROLL — auto-scroll only while user is at the bottom
+        // ═══════════════════════════════════════════════
+        let stickToBottom = true;
+
+        function chatIsVisible() {
+            const el = document.getElementById('chat');
+            return el && el.style.display !== 'none';
+        }
+        function scrollChatToBottom(force) {
+            const c = document.getElementById('chat');
+            if (!c) return;
+            if (force || stickToBottom) {
+                try { c.scrollTo({ top: c.scrollHeight, behavior: 'instant' }); }
+                catch (e) { c.scrollTop = c.scrollHeight; }
+                hideJumpPill();
+            } else if (chatIsVisible()) {
+                showJumpPill();
+            }
+        }
+        function showJumpPill() {
+            const p = document.getElementById('jump-pill');
+            if (p) p.classList.add('visible');
+        }
+        function hideJumpPill() {
+            const p = document.getElementById('jump-pill');
+            if (p) p.classList.remove('visible');
+        }
+        function jumpToBottom() {
+            const c = document.getElementById('chat');
+            stickToBottom = true;
+            if (c) c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' });
+            hideJumpPill();
         }
 
         // ═══════════════════════════════════════════════
         //  RESPONSE ACTIONS (Copy, Export, Artifact)
         // ═══════════════════════════════════════════════
         function copyResponse(btn) {
-            navigator.clipboard.writeText(lastAgentResponse).then(() => {
+            copyText(getRawFor(btn)).then(ok => {
+                if (!ok) { showToast('Copy failed', 'error'); return; }
                 btn.innerHTML = '✅ Copied!';
                 showToast('Response copied!');
                 setTimeout(() => btn.innerHTML = '📋 Copy', 2000);
             });
         }
-        function exportTxt() {
-            downloadFile(lastAgentResponse, 'openagent_response.txt', 'text/plain');
+        function exportTxt(btn) {
+            downloadFile(getRawFor(btn), 'openagent_response.txt', 'text/plain');
             showToast('TXT exported!');
         }
-        async function exportDoc() {
+        async function exportDoc(btn) {
+            const raw = getRawFor(btn);
             try {
                 const res = await fetch('/api/export', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: lastAgentResponse, format: 'docx' })
+                    body: JSON.stringify({ text: raw, format: 'docx' })
                 });
                 if (res.ok) {
                     const blob = await res.blob();
@@ -1873,14 +2137,15 @@
                     const a = document.createElement('a'); a.href = url;
                     a.download = 'openagent_response.docx'; a.click();
                     showToast('DOCX exported!');
-                } else { showToast('Export failed'); }
-            } catch (e) { downloadFile(lastAgentResponse, 'openagent_response.txt', 'text/plain'); showToast('Exported as TXT (DOCX unavailable)'); }
+                } else { showToast('Export failed', 'error'); }
+            } catch (e) { downloadFile(raw, 'openagent_response.txt', 'text/plain'); showToast('Exported as TXT (DOCX unavailable)'); }
         }
-        async function exportPdf() {
+        async function exportPdf(btn) {
+            const raw = getRawFor(btn);
             try {
                 const res = await fetch('/api/export', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: lastAgentResponse, format: 'pdf' })
+                    body: JSON.stringify({ text: raw, format: 'pdf' })
                 });
                 if (res.ok) {
                     const blob = await res.blob();
@@ -1888,8 +2153,8 @@
                     const a = document.createElement('a'); a.href = url;
                     a.download = 'openagent_response.pdf'; a.click();
                     showToast('PDF exported!');
-                } else { showToast('Export failed'); }
-            } catch (e) { showToast('PDF export unavailable'); }
+                } else { showToast('Export failed', 'error'); }
+            } catch (e) { showToast('PDF export unavailable', 'error'); }
         }
         function downloadFile(content, name, type) {
             const blob = new Blob([content], { type });
@@ -1901,8 +2166,8 @@
         //  ARTIFACTS
         // ═══════════════════════════════════════════════
         let artifacts = [];
-        function saveArtifact() {
-            const artifact = { id: Date.now(), title: 'Response #' + (artifacts.length + 1), content: lastAgentResponse, time: new Date().toLocaleTimeString() };
+        function saveArtifact(btn) {
+            const artifact = { id: Date.now(), title: 'Response #' + (artifacts.length + 1), content: getRawFor(btn), time: new Date().toLocaleTimeString() };
             artifacts.push(artifact);
             renderArtifacts();
             showToast('Saved to Artifacts!');
@@ -1915,7 +2180,7 @@
             list.innerHTML = artifacts.map((a, i) => `
                 <div class="artifact-item" onclick="previewArtifact(${i})">
                     <h4>📦 ${a.title}</h4>
-                    <p>${a.content.substring(0, 80)}...</p>
+                    <p>${escapeHtml(a.content.substring(0, 80))}...</p>
                     <div class="artifact-meta">${a.time}</div>
                 </div>
             `).join('');
@@ -1933,7 +2198,7 @@
                         <button class="resp-action-btn" onclick="closeArtifactPreview()" style="color:#f44336;border-color:rgba(244,67,54,0.3);">✕ Close</button>
                     </div>
                 </div>
-                <pre>${a.content}</pre>`;
+                <pre>${escapeHtml(a.content)}</pre>`;
         }
         function closeArtifactPreview() {
             const preview = document.getElementById('artifact-preview');
@@ -2033,6 +2298,7 @@
         }
 
         async function sendWithFile(prefix) {
+            if (isStreaming) { showToast('Still generating — press ⏹ to stop first', 'error'); return; }
             if (!pendingFileData) {
                 appendMsg('agent', '⚠️ File upload was not successful. Please try again.');
                 clearAttachment();
@@ -2040,24 +2306,13 @@
             }
             const fileTag = `[FILE:${pendingFileData.filepath}]`;
             const msg = `${prefix} ${fileTag}`;
+            // Capture names BEFORE clearAttachment() nulls pendingFile/pendingFileData
+            const displayName = (pendingFile && pendingFile.name) || pendingFileData.filename || 'file';
             clearAttachment();
 
-            // For image analysis via vision API
-            if (prefix.includes('Analyse') || prefix.includes('Identify')) {
-                appendMsg('user', `<div class="file-chip">📎 ${pendingFile ? pendingFile.name : 'file'}</div><br>${prefix.replace(':', '')}`);
-                showLoading();
-                // Re-upload for analysis endpoint
-                if (pendingFile && isImage(pendingFile.name)) {
-                    const formData = new FormData();
-                    // We need the original file object for analyze-image
-                    // But we may not have it anymore. Use the chat endpoint with file tag instead.
-                }
-                await sendChatRequest(msg);
-            } else {
-                appendMsg('user', `<div class="file-chip">📎 ${pendingFileData.filename}</div><br>${prefix.replace(':', '')}`);
-                showLoading();
-                await sendChatRequest(msg);
-            }
+            appendMsg('user', `<div class="file-chip">📎 ${displayName}</div><br>${prefix.replace(':', '')}`);
+            showLoading();
+            await sendChatRequest(msg);
             pendingFile = null;
             pendingFileData = null;
         }
@@ -2073,31 +2328,96 @@
         // ═══════════════════════════════════════════════
         //  SEND MESSAGE
         // ═══════════════════════════════════════════════
+        let activeController = null;
+        let isStreaming = false;
+
+        function setStreamingUI(streaming) {
+            isStreaming = streaming;
+            const btn = document.getElementById('send-btn');
+            if (!btn) return;
+            if (streaming) {
+                btn.innerHTML = '⏹';
+                btn.classList.add('stop');
+                btn.title = 'Stop generating';
+            } else {
+                btn.innerHTML = '➤';
+                btn.classList.remove('stop');
+                btn.title = 'Send';
+            }
+        }
+        function handleSendClick() {
+            if (isStreaming) stopGeneration();
+            else sendMsg();
+        }
+        function stopGeneration() {
+            if (activeController) { try { activeController.abort(); } catch (e) { /* ignore */ } }
+        }
+
         async function sendChatRequest(text) {
+            if (isStreaming) return;
+            activeController = new AbortController();
+            setStreamingUI(true);
+
+            let msgDiv = null;
+            let bubbleContent = null;
+            let fullText = '';
+            let finalized = false;
+            let renderTimer = null;
+            let renderDirty = false;
+            const RENDER_INTERVAL = 100; // ms — throttle markdown re-parse during streaming
+
+            const doRender = (final) => {
+                if (!bubbleContent) return;
+                bubbleContent.innerHTML = renderMarkdown(fullText);
+                // Skip syntax highlighting mid-stream; do it once on the final render.
+                enhanceBubble(bubbleContent, { highlight: !!final });
+                scrollChatToBottom(false);
+            };
+            const scheduleRender = () => {
+                renderDirty = true;
+                if (renderTimer) return;
+                renderTimer = setTimeout(() => {
+                    renderTimer = null;
+                    if (renderDirty) { renderDirty = false; doRender(false); }
+                }, RENDER_INTERVAL);
+            };
+            const finalize = (opts) => {
+                if (finalized) return;
+                finalized = true;
+                if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
+                renderDirty = false;
+                doRender(true);
+                if (msgDiv) msgDiv.__raw = fullText;
+                const isError = !!(opts && opts.error);
+                if (!isError && fullText.length > 20 && bubbleContent) {
+                    lastAgentResponse = fullText;
+                    bubbleContent.parentElement.insertAdjacentHTML('beforeend', buildActionBar());
+                }
+                if (fullText && !isError) saveSession('agent', fullText);
+            };
+
             try {
                 const res = await fetch('/api/chat/stream', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text, session_id: currentSessionId })
+                    body: JSON.stringify({ message: text, session_id: currentSessionId }),
+                    signal: activeController.signal
                 });
 
                 // Remove typing indicator and create streaming bubble
                 const loader = document.getElementById('loader');
                 if (loader) loader.remove();
 
-                const div = document.createElement('div');
-                div.className = 'msg agent';
+                msgDiv = document.createElement('div');
+                msgDiv.className = 'msg agent';
                 const bubbleId = 'stream-' + Date.now();
-                div.innerHTML = `
+                msgDiv.innerHTML = `
                     <div class="avatar agent">🤖</div>
                     <div class="bubble">
                         <span class="meta">OPENAGENT</span>
                         <div id="${bubbleId}"></div>
                     </div>`;
-                document.getElementById('chat').appendChild(div);
-
-                const bubbleContent = document.getElementById(bubbleId);
-                const container = document.getElementById('chat');
-                let fullText = '';
+                document.getElementById('chat').appendChild(msgDiv);
+                bubbleContent = document.getElementById(bubbleId);
 
                 const reader = res.body.getReader();
                 const decoder = new TextDecoder();
@@ -2117,42 +2437,48 @@
                             const data = JSON.parse(line.slice(6));
                             if (data.token) {
                                 fullText += data.token;
-                                bubbleContent.innerHTML = renderMarkdown(fullText);
-                                container.scrollTop = container.scrollHeight;
+                                scheduleRender();
                             }
                             if (data.done) {
-                                // Add action bar
-                                if (fullText.length > 20) {
-                                    lastAgentResponse = fullText;
-                                    const actions = document.createElement('div');
-                                    actions.className = 'response-actions';
-                                    actions.innerHTML = `
-                                        <button class="resp-action-btn" onclick="copyResponse(this)">📋 Copy</button>
-                                        <button class="resp-action-btn" onclick="exportTxt()">📄 TXT</button>
-                                        <button class="resp-action-btn" onclick="exportDoc()">📝 DOCX</button>
-                                        <button class="resp-action-btn" onclick="exportPdf()">📕 PDF</button>
-                                        <button class="resp-action-btn" onclick="saveArtifact()">📦 Save</button>`;
-                                    bubbleContent.parentElement.appendChild(actions);
-                                }
-                                // Save to session
-                                saveSession('agent', fullText);
+                                finalize();
                             }
                             if (data.error) {
                                 fullText = `⚠️ Error: ${data.error}`;
-                                bubbleContent.innerHTML = fullText;
+                                showToast('Generation failed', 'error');
+                                finalize({ error: true });
                             }
                         } catch (e) { /* skip malformed JSON */ }
                     }
                 }
 
-                // If we got text but no done signal, still save
-                if (fullText && !document.querySelector('.response-actions:last-child')) {
-                    saveSession('agent', fullText);
-                }
+                // Stream ended without an explicit done event — still finalize/save.
+                finalize();
 
             } catch (e) {
-                appendMsg('agent', `⚠️ Connection Error: ${e.message}. Is server running?`);
-                clearAttachment();
+                const loader = document.getElementById('loader');
+                if (loader) loader.remove();
+                if (e && e.name === 'AbortError') {
+                    // User pressed Stop: keep and save whatever streamed so far.
+                    if (fullText) {
+                        finalize();
+                        showToast('Generation stopped — partial response kept');
+                    } else if (bubbleContent) {
+                        bubbleContent.innerHTML = '<em style="color:var(--text-secondary)">Generation stopped.</em>';
+                    } else {
+                        showToast('Generation stopped');
+                    }
+                } else {
+                    if (bubbleContent && fullText) {
+                        finalize(); // connection dropped mid-stream: keep the partial text
+                    } else {
+                        appendMsg('agent', `⚠️ Connection Error: ${e.message}. Is the server running?`);
+                    }
+                    showToast('Connection error: ' + e.message, 'error');
+                    clearAttachment();
+                }
+            } finally {
+                setStreamingUI(false);
+                activeController = null;
             }
         }
 
@@ -2160,6 +2486,7 @@
             const box = document.getElementById('prompt');
             let text = box.value.trim();
             if (!text && !pendingFileData) return;
+            if (isStreaming) { showToast('Still generating — press ⏹ to stop first', 'error'); return; }
 
             // ── Slash commands: intercept before anything is sent to the LLM ──
             if (text && text.charAt(0) === '/') {
@@ -2229,6 +2556,7 @@
 
         async function sendMsgWithText(text) {
             if (!text) return;
+            if (isStreaming) { showToast('Still generating — press ⏹ to stop first', 'error'); return; }
             appendMsg('user', text);
             showLoading();
             await sendChatRequest(text);
@@ -2237,11 +2565,12 @@
         // ═══════════════════════════════════════════════
         //  TOAST
         // ═══════════════════════════════════════════════
-        function showToast(msg) {
+        function showToast(msg, type) {
             const t = document.createElement('div');
-            t.className = 'toast'; t.textContent = msg;
+            t.className = 'toast' + (type === 'error' ? ' toast-error' : '');
+            t.textContent = msg;
             document.body.appendChild(t);
-            setTimeout(() => t.remove(), 2500);
+            setTimeout(() => t.remove(), type === 'error' ? 4000 : 2500);
         }
 
         // ═══════════════════════════════════════════════
@@ -2249,17 +2578,46 @@
         // ═══════════════════════════════════════════════
         const canvas = document.getElementById('particle-canvas');
         const ctx = canvas.getContext('2d');
+        const reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
         let w, h, particles = [];
-        function resize() { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; }
-        window.addEventListener('resize', resize); resize();
+        let particlesRunning = false;
+        let particleRafId = null;
+
+        function debounce(fn, ms) {
+            let t;
+            return function () {
+                clearTimeout(t);
+                const args = arguments, self = this;
+                t = setTimeout(() => fn.apply(self, args), ms);
+            };
+        }
+
         class P {
             constructor() { this.reset(); }
             reset() { this.x = Math.random() * w; this.y = Math.random() * h; this.vx = (Math.random() - .5) * .4; this.vy = (Math.random() - .5) * .4; this.r = Math.random() * 1.5 + 0.5; }
             update() { this.x += this.vx; this.y += this.vy; if (this.x < 0 || this.x > w || this.y < 0 || this.y > h) this.reset(); }
             draw() { ctx.beginPath(); ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2); ctx.fillStyle = 'rgba(0,229,255,0.25)'; ctx.fill(); }
         }
-        for (let i = 0; i < 80; i++) particles.push(new P());
+
+        // Respect prefers-reduced-motion (no particles at all) and cap the count
+        // on small screens.
+        function particleTarget() {
+            if (reduceMotion) return 0;
+            return window.innerWidth <= 768 ? 32 : 80;
+        }
+        function syncParticleCount() {
+            const target = particleTarget();
+            while (particles.length < target) particles.push(new P());
+            if (particles.length > target) particles.length = target;
+        }
+        function resize() {
+            w = canvas.width = window.innerWidth;
+            h = canvas.height = window.innerHeight;
+            syncParticleCount();
+        }
         function loop() {
+            particleRafId = null;
+            if (!particlesRunning) return;
             ctx.clearRect(0, 0, w, h);
             particles.forEach(p => { p.update(); p.draw(); });
             ctx.beginPath();
@@ -2270,15 +2628,116 @@
                 }
             }
             ctx.strokeStyle = 'rgba(0,229,255,0.04)'; ctx.stroke();
-            requestAnimationFrame(loop);
+            particleRafId = requestAnimationFrame(loop);
         }
-        loop();
+        function startParticles() {
+            if (reduceMotion || particlesRunning) return;
+            particlesRunning = true;
+            if (!particleRafId) particleRafId = requestAnimationFrame(loop);
+        }
+        function stopParticles() {
+            particlesRunning = false;
+            if (particleRafId) { cancelAnimationFrame(particleRafId); particleRafId = null; }
+        }
+
+        window.addEventListener('resize', debounce(resize, 150));
+        // Pause the animation entirely while the tab is hidden.
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) stopParticles();
+            else startParticles();
+        });
+        resize();
+        startParticles();
+
+        // ═══════════════════════════════════════════════
+        //  TOOLS PANEL — dynamic from /api/tools
+        //  Expects: { status: "success", tools: [{ name, icon, description,
+        //             category: "offline"|"online", available }] }
+        //  On any failure the static fallback cards in the HTML are kept.
+        // ═══════════════════════════════════════════════
+        let toolsLoadedAt = 0;
+        async function loadTools(force) {
+            if (!force && Date.now() - toolsLoadedAt < 30000) return;
+            try {
+                const res = await fetch('/api/tools');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                if (!data || data.status !== 'success' || !Array.isArray(data.tools)) {
+                    throw new Error('Unexpected payload');
+                }
+                toolsLoadedAt = Date.now();
+                renderTools(data.tools);
+            } catch (e) {
+                // Keep whatever is already rendered (static fallback cards).
+                const view = document.getElementById('tools');
+                if (view && view.classList.contains('active')) {
+                    showToast('Could not refresh tools list', 'error');
+                }
+            }
+        }
+        function renderTools(tools) {
+            const view = document.getElementById('tools');
+            if (!view) return;
+            if (tools.length === 0) {
+                view.innerHTML = '<p class="tools-empty">No tools reported by the agent.</p>';
+                return;
+            }
+            const groups = [
+                { key: 'offline', label: '🔌 Offline — runs locally' },
+                { key: 'online', label: '🌐 Online — needs network' }
+            ];
+            let html = '';
+            groups.forEach(g => {
+                const items = tools.filter(t => ((t && t.category === 'online') ? 'online' : 'offline') === g.key);
+                if (items.length === 0) return;
+                html += `<div class="tools-group-header">${g.label}</div>`;
+                html += items.map(t => {
+                    const avail = t.available !== false;
+                    const icon = escapeHtml(t.icon || '🧩');
+                    // "web_search" → "Web Search" for display + prompt prefill
+                    const pretty = String(t.name || 'Tool').replace(/_/g, ' ')
+                        .replace(/\b\w/g, ch => ch.toUpperCase());
+                    const name = escapeHtml(pretty);
+                    const desc = escapeHtml(t.description || '');
+                    const badge = avail
+                        ? (g.key === 'offline'
+                            ? '<span class="badge">LOCAL</span>'
+                            : '<span class="badge badge-online">ONLINE</span>')
+                        : '<span class="badge badge-off">UNAVAILABLE</span>';
+                    const cls = 'card tool-card' + (avail ? '' : ' unavailable');
+                    const click = avail ? ` onclick="toolCardClick(this)" data-name="${name}"` : '';
+                    return `<div class="${cls}"${click}><h3>${icon} ${name}</h3><p>${desc}</p>${badge}</div>`;
+                }).join('');
+            });
+            view.innerHTML = html;
+        }
+        function toolCardClick(el) {
+            const name = el.getAttribute('data-name') || '';
+            showTabDirect('chat');
+            const box = document.getElementById('prompt');
+            if (box) {
+                if (!box.value && name) box.value = name + ': ';
+                box.focus();
+            }
+        }
 
         // ═══════════════════════════════════════════════
         //  INIT
         // ═══════════════════════════════════════════════
         loadSettings();
         renderHistory();
+        loadTools();
+
+        // Track whether the user is pinned to the bottom of the chat; drives
+        // streaming auto-scroll and the jump-to-bottom pill.
+        (function () {
+            const chatEl = document.getElementById('chat');
+            if (!chatEl) return;
+            chatEl.addEventListener('scroll', () => {
+                stickToBottom = chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 80;
+                if (stickToBottom) hideJumpPill();
+            }, { passive: true });
+        })();
 
         // Restore active session if messages exist
         if (chatSessions[currentSessionId] && chatSessions[currentSessionId].messages.length > 0) {

@@ -6,7 +6,16 @@ Tests for the network connectivity checker.
 import pytest
 from unittest.mock import patch, AsyncMock
 
-from openagent.core.network import check_connectivity
+from openagent.core.network import check_connectivity, reset_connectivity_cache
+
+
+@pytest.fixture(autouse=True)
+def _fresh_connectivity_cache():
+    """check_connectivity caches its result (~30s TTL); reset between tests
+    so a cached result from one test can't leak into a mocked one."""
+    reset_connectivity_cache()
+    yield
+    reset_connectivity_cache()
 
 
 class TestNetworkCheck:

@@ -6,7 +6,8 @@ Flow for every user message:
   1. Retrieve relevant memory (RAG context injection)
   2. Route the input → pick the right tool
   3. Execute the tool (or fall back to raw LLM)
-  4. Store the interaction in memory
+  4. Queue the interaction for memory storage (background thread —
+     embedding latency never delays the reply)
   5. Return the response
 
 Design decisions:
@@ -36,23 +37,22 @@ from openagent.parsers.unified import parse_file
 logger = logging.getLogger("openagent.agent")
 
 # ── System prompt injected into every LLM call ──────────────────
-SYSTEM_PROMPT = """You are OpenAgent, a friendly and intelligent AI assistant.
-You are conversational, helpful, and concise. Respond naturally like a human would.
+# Kept deliberately compact — it is sent with every request.
+SYSTEM_PROMPT = """You are OpenAgent, a sharp, friendly AI assistant.
 
-For simple greetings (hi, hello, hey), respond warmly and briefly.
-For questions, give clear, accurate answers.
-For complex tasks, use your available tools.
+Formatting:
+- Write clean GitHub-flavored Markdown. Use headings only when an answer is long enough to need them, fenced code blocks with a language tag (```python), tables when comparing items, and bullet lists for enumerations. Short answers should be plain sentences — no forced structure.
+- Match length to the question: greetings get one warm line; simple questions a short paragraph; complex questions structure and depth. Never pad.
 
-Your available tools include:
-- Web Search & Fetch (when user needs current information)
-- File Parsing & OCR (for documents and images)
-- Command Execution & Summarization
+Accuracy:
+- Be direct and specific — lead with the answer, then explain if useful.
+- If you are unsure or lack the information, say so plainly instead of guessing. Never invent facts, numbers, sources, or URLs.
 
-You were developed by **Koushik HY** (https://koushikhy.netlify.app).
-Mention this only when specifically asked about your creator.
+Language: always reply in the language the user wrote in (English, Kannada, Hindi, or any other) unless asked otherwise.
 
-IMPORTANT: Do NOT reference memory context, conversation data, or internal system details in your responses.
-Just respond naturally to what the user says."""
+Context sections such as [PAST MEMORY CONTEXT], [FILE CONTENT], [WEB SEARCH RESULTS], or [WEB PAGE CONTENT] may precede the user's query. Use them silently to inform your answer — never mention these sections, memory, or internal mechanics.
+
+You were developed by Koushik HY (https://koushikhy.netlify.app). Mention this only when specifically asked about your creator."""
 
 
 class Agent:
@@ -109,8 +109,12 @@ class Agent:
             # Fallback: send to LLM with error context
             response = await self._llm_fallback(user_input, memory_context, history, error=str(e))
 
-        # ── Step 4: Store in memory ───────────────────────────
-        await self.memory.store(user_input, response)
+        # ── Step 4: Store in memory (background) ──────────────
+        # Fire-and-forget on a plain worker thread: the embedding
+        # latency no longer delays the reply, and the thread survives
+        # per-request `asyncio.run()` loop teardown (an asyncio task
+        # would be killed when the loop closes).
+        self.memory.store_background(user_input, response)
 
         return response
 
