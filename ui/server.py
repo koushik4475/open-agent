@@ -2,7 +2,14 @@
 """
 Flask API server to connect the web UI to the OpenAgent backend.
 Provides REST API endpoints for chat and system status.
+
+Async model: one persistent background event loop (started at import)
+runs ALL agent coroutines via asyncio.run_coroutine_threadsafe. This
+replaces the old per-request asyncio.run(), which paid loop startup /
+teardown on every call and tore down any pending async work.
 """
+
+from __future__ import annotations
 
 from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
@@ -39,22 +46,50 @@ logging.basicConfig(
 )
 logger = logging.getLogger("server")
 
+# ── Persistent event loop ───────────────────────────────────────
+# One background loop shared by every request. Flask worker threads
+# submit coroutines with run_coroutine_threadsafe and block on the
+# Future. Benefits: no per-request loop startup/teardown, and the
+# singleton Agent's async resources always live on a single loop.
+_async_loop = asyncio.new_event_loop()
+
+
+def _loop_worker() -> None:
+    asyncio.set_event_loop(_async_loop)
+    _async_loop.run_forever()
+
+
+threading.Thread(target=_loop_worker, name="openagent-eventloop", daemon=True).start()
+
+
+def run_async(coro, timeout: float | None = 300):
+    """Run a coroutine on the shared loop from a Flask worker thread."""
+    return asyncio.run_coroutine_threadsafe(coro, _async_loop).result(timeout)
+
+
 # Global agent instance
 agent_instance = None
 conversation_sessions = {}  # Map session_id -> list of messages
-_agent_lock = threading.Lock()  # Guards lazy singleton init against concurrent requests
+_agent_init_lock: asyncio.Lock | None = None  # Created lazily on the shared loop
 
 
 async def get_agent():
-    """Get or create the agent instance."""
-    global agent_instance
-    # Double-checked locking: avoid taking the lock on the hot path once
-    # initialized, but ensure exactly one Agent (and one ChromaDB client)
-    # is built even under Flask's threaded server.
-    if agent_instance is None:
-        with _agent_lock:
-            if agent_instance is None:
-                agent_instance = await Agent.create()
+    """Get or create the agent instance (single-flight).
+
+    NOTE: this must use an asyncio.Lock, not a threading.Lock — all
+    coroutines run on the ONE shared loop thread, so blocking on a
+    threading lock while the holder is parked at an await would
+    deadlock the loop.
+    """
+    global agent_instance, _agent_init_lock
+    if agent_instance is not None:
+        return agent_instance
+    if _agent_init_lock is None:
+        # No await between check and assignment → atomic on the single loop thread
+        _agent_init_lock = asyncio.Lock()
+    async with _agent_init_lock:
+        if agent_instance is None:
+            agent_instance = await Agent.create()
     return agent_instance
 
 
@@ -144,9 +179,8 @@ def chat():
             
             return response
         
-        # Execute async function using asyncio.run for cleaner loop management in 3.7+
-        # This is safer than manually creating and closing loops.
-        response = asyncio.run(process_message())
+        # Submit to the persistent background loop (no per-request loop churn)
+        response = run_async(process_message())
         
         return jsonify({
             'status': 'success',
@@ -184,12 +218,13 @@ def chat_stream():
             import json as _json
             history = conversation_sessions[session_id]
 
-            # Build the agent + route synchronously
-            loop = asyncio.new_event_loop()
-            agent = loop.run_until_complete(get_agent())
+            # Async prep runs on the shared background loop; the token
+            # loop itself (agent.llm.stream_generate) is a plain sync
+            # generator that runs right here in the Flask thread.
+            agent = run_async(get_agent())
 
             # Route the message
-            tool_name, ctx = loop.run_until_complete(route(user_message))
+            tool_name, ctx = run_async(route(user_message))
 
             # For GENERAL chat, use streaming directly
             from openagent.core.router import ToolName
@@ -198,7 +233,7 @@ def chat_stream():
                 from openagent.core.agent import Agent as AgentClass
                 memory_ctx = ""
                 if not AgentClass._is_simple_query(user_message):
-                    memory_ctx = loop.run_until_complete(agent.memory.retrieve(user_message))
+                    memory_ctx = run_async(agent.memory.retrieve(user_message))
 
                 prompt = AgentClass._build_prompt(ctx["prompt"], memory_ctx)
                 offline_warning = ctx.get("offline_warning", "")
@@ -217,8 +252,8 @@ def chat_stream():
                 from openagent.core.agent import Agent as AgentClass
                 memory_ctx = ""
                 if not AgentClass._is_simple_query(user_message):
-                    memory_ctx = loop.run_until_complete(agent.memory.retrieve(user_message))
-                search_results = loop.run_until_complete(web_search(ctx.get("query", ctx["prompt"])))
+                    memory_ctx = run_async(agent.memory.retrieve(user_message))
+                search_results = run_async(web_search(ctx.get("query", ctx["prompt"])))
                 prompt = AgentClass._build_prompt(ctx["prompt"], memory_ctx, web_results=search_results)
 
                 full_response = []
@@ -229,7 +264,8 @@ def chat_stream():
                 complete = "".join(full_response)
             else:
                 # For tool-based routes, run the full agent (non-streaming) and send as one chunk
-                complete = loop.run_until_complete(agent.run(user_message, history))
+                # (agent.run already queues its own background memory store)
+                complete = run_async(agent.run(user_message, history))
                 yield f"data: {_json.dumps({'token': complete})}\n\n"
 
             # Update session history
@@ -238,9 +274,10 @@ def chat_stream():
             if len(history) > 40:
                 conversation_sessions[session_id] = history[-40:]
 
-            # Store in memory
-            loop.run_until_complete(agent.memory.store(user_message, complete))
-            loop.close()
+            # Store in memory without delaying the final SSE event
+            # (skip for tool routes — agent.run stored it already)
+            if tool_name in (ToolName.GENERAL, ToolName.WEB_SEARCH):
+                agent.memory.store_background(user_message, complete)
 
             yield f"data: {_json.dumps({'done': True})}\n\n"
 
@@ -280,8 +317,8 @@ def status():
                 'memory_db': str(agent.cfg.memory.db_path)
             }
         
-        status_data = asyncio.run(get_status())
-        
+        status_data = run_async(get_status())
+
         return jsonify(status_data)
     
     except Exception as e:
@@ -291,41 +328,52 @@ def status():
         }), 500
 
 
+# Static tool registry for the UI — kept in sync with
+# openagent.core.router.ToolName. (The Agent has no .tools attribute;
+# the old implementation iterated agent.tools and always returned 500.)
+TOOL_REGISTRY = [
+    {"name": "general", "icon": "💬", "description": "General Q&A and conversation with the LLM", "category": "offline"},
+    {"name": "summarize", "icon": "📝", "description": "Summarize text into key points and a TL;DR", "category": "offline"},
+    {"name": "parse_file", "icon": "📄", "description": "Parse TXT, PDF and DOCX files and answer questions about them", "category": "offline"},
+    {"name": "ocr_image", "icon": "🖼️", "description": "Extract text from images (OCR)", "category": "offline"},
+    {"name": "analyze_image", "icon": "👁️", "description": "Vision AI image analysis (people, objects, scenes)", "category": "online"},
+    {"name": "run_command", "icon": "🔧", "description": "Execute sandboxed shell commands", "category": "offline"},
+    {"name": "file_ops", "icon": "📂", "description": "Read, write, search and fix project files (MCP)", "category": "offline"},
+    {"name": "web_search", "icon": "🌐", "description": "Search the web via DuckDuckGo", "category": "online"},
+    {"name": "web_fetch", "icon": "🔗", "description": "Fetch and read a webpage", "category": "online"},
+]
+
+
 @app.route('/api/tools', methods=['GET'])
 def tools():
     """
-    Get list of available tools.
-    
+    Get the list of available tools (static registry).
+
     Response JSON:
         {
-            "tools": [...],
-            "status": "success"
+            "status": "success",
+            "tools": [
+                {"name": str, "icon": str, "description": str,
+                 "category": "offline" | "online", "available": bool}
+            ]
         }
+
+    `available` is True for offline tools; for online tools it reflects
+    current connectivity (TTL-cached check, computed once per request).
     """
     try:
-        async def get_tools():
-            agent = await get_agent()
-            # Get tool information from agent
-            tool_list = []
-            for tool_name, tool_obj in agent.tools.items():
-                tool_list.append({
-                    'name': tool_name,
-                    'description': getattr(tool_obj, '__doc__', 'No description available')
-                })
-            return tool_list
-        
-        tools_data = asyncio.run(get_tools())
-        
-        return jsonify({
-            'status': 'success',
-            'tools': tools_data
-        })
-    
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': f'Error getting tools: {str(e)}'
-        }), 500
+        online = run_async(check_connectivity())
+    except Exception:
+        online = False
+
+    tool_list = [
+        {**tool, "available": True if tool["category"] == "offline" else bool(online)}
+        for tool in TOOL_REGISTRY
+    ]
+    return jsonify({
+        'status': 'success',
+        'tools': tool_list
+    })
 
 
 @app.route('/api/analyze-image', methods=['POST'])
@@ -371,8 +419,8 @@ def analyze_image():
 
             return response
         
-        response = asyncio.run(do_analysis())
-        
+        response = run_async(do_analysis())
+
         return jsonify({
             'status': 'success',
             'response': response,

@@ -20,10 +20,12 @@ Why sentence-transformers (all-MiniLM-L6-v2):
 """
 
 from __future__ import annotations
+import asyncio
 import logging
 import os
 import uuid
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
@@ -31,6 +33,13 @@ from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunct
 from openagent.config import settings
 
 logger = logging.getLogger("openagent.memory")
+
+# Single-worker executor for background (fire-and-forget) stores.
+# One worker serializes ChromaDB writes; plain threads (not asyncio
+# tasks) survive per-request `asyncio.run()` loop teardown, and
+# non-daemon executor threads are joined at interpreter exit so
+# pending writes still flush on shutdown.
+_STORE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="openagent-memstore")
 
 
 class MemoryStore:
@@ -107,9 +116,9 @@ class MemoryStore:
         )
         return cls(client=client, collection=collection)
 
-    async def store(self, user_input: str, response: str) -> None:
+    def store_sync(self, user_input: str, response: str) -> None:
         """
-        Embed and persist one interaction.
+        Embed and persist one interaction (blocking).
         Document = "user: ... | agent: ..." for retrieval coherence.
         Skips trivial interactions to keep memory clean.
         """
@@ -117,7 +126,7 @@ class MemoryStore:
         if len(user_input.strip()) < 10 or len(response.strip()) < 20:
             logger.debug("Skipping trivial interaction (too short to be useful)")
             return
-        
+
         doc = f"user: {user_input}\nagent: {response}"
         self._collection.add(
             documents=[doc],
@@ -126,9 +135,34 @@ class MemoryStore:
         )
         logger.debug(f"Stored memory item (total: {self._collection.count()})")
 
-    async def retrieve(self, query: str) -> str:
+    def _store_safe(self, user_input: str, response: str) -> None:
+        """store_sync wrapper that logs instead of raising (background use)."""
+        try:
+            self.store_sync(user_input, response)
+        except Exception as e:
+            logger.warning(f"Background memory store failed: {e}")
+
+    def store_background(self, user_input: str, response: str) -> None:
         """
-        Retrieve the top-N most relevant past interactions.
+        Fire-and-forget store: submits the embedding + write to a
+        background thread so the caller can return the response to the
+        user without paying the embedding latency. Safe to call from
+        any thread/event loop; failures are logged, never raised.
+        """
+        _STORE_EXECUTOR.submit(self._store_safe, user_input, response)
+
+    async def store(self, user_input: str, response: str) -> None:
+        """
+        Awaitable store — runs the blocking embed/write in a thread so
+        the event loop isn't stalled. Completes before returning (use
+        store_background() when the caller shouldn't wait at all).
+        """
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.store_sync, user_input, response)
+
+    def retrieve_sync(self, query: str) -> str:
+        """
+        Retrieve the top-N most relevant past interactions (blocking).
         Returns a formatted string ready to inject into the prompt.
         """
         n = settings.memory.max_context_chunks
@@ -163,3 +197,11 @@ class MemoryStore:
                 logger.debug(f"Skipping memory {i} (distance={dist:.2f}, too far)")
 
         return "\n\n".join(chunks)
+
+    async def retrieve(self, query: str) -> str:
+        """
+        Awaitable retrieve — runs the blocking embed + vector query in a
+        thread so a shared event loop isn't stalled during embedding.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.retrieve_sync, query)

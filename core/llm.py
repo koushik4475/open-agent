@@ -1,11 +1,17 @@
 # openagent/core/llm.py
 """
-Thin async wrapper around Ollama's local HTTP API.
+Thin async wrapper around the LLM providers.
 
-Ollama exposes a REST endpoint at http://localhost:11434/api/generate
-This module is the ONLY place the agent talks to the LLM.
-Swapping to a different local runtime (llama.cpp server, etc.)
-means editing only this file.
+Talks to a cloud OpenAI-compatible API (Groq / OpenRouter / DeepSeek)
+with automatic fallback to local Ollama (http://localhost:11434).
+This module is the ONLY place the agent talks to the LLM, so swapping
+providers means editing only this file.
+
+Performance notes:
+  - All HTTP goes through one shared requests.Session (keep-alive +
+    connection pooling — saves a TLS handshake per call).
+  - The pre-flight connectivity probe is TTL-cached (~30 s) instead of
+    opening a raw socket before every generate/stream call.
 """
 
 from __future__ import annotations
@@ -15,6 +21,8 @@ import asyncio
 import base64
 import socket
 import os
+import threading
+import time
 import requests
 
 from openagent.config import settings
@@ -27,17 +35,52 @@ if _api_key_from_env:
 
 logger = logging.getLogger("openagent.llm")
 
+# ── Shared HTTP session (connection pooling) ────────────────────
+# One pooled requests.Session for every HTTP call in this module
+# (cloud chat, streaming, vision, Ollama, health checks). Reusing
+# the session keeps TCP/TLS connections alive between calls, which
+# saves a full TLS handshake per request against the same host.
+# requests.Session is safe for concurrent use across threads.
+_session = requests.Session()
+_adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=8)
+_session.mount("https://", _adapter)
+_session.mount("http://", _adapter)
 
-def _quick_net_check() -> bool:
-    """Fast synchronous connectivity check (2 second timeout)."""
+# ── Connectivity check with TTL cache ───────────────────────────
+# This used to open a raw socket before EVERY generate/stream call.
+# Cache the result (success AND failure) for a short window on a
+# monotonic clock so bursts of requests pay for a single probe.
+_NET_CHECK_TTL_SECONDS = 30.0
+_net_check_lock = threading.Lock()
+_net_check_cached: bool | None = None
+_net_check_at: float = 0.0
+
+
+def _quick_net_check(force: bool = False) -> bool:
+    """Fast connectivity check (2 second timeout), cached ~30 seconds.
+
+    Pass force=True to bypass the cache and probe immediately.
+    """
+    global _net_check_cached, _net_check_at
+    with _net_check_lock:
+        if (
+            not force
+            and _net_check_cached is not None
+            and time.monotonic() - _net_check_at < _NET_CHECK_TTL_SECONDS
+        ):
+            return _net_check_cached
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(2)
         sock.connect(("1.1.1.1", 443))
         sock.close()
-        return True
+        result = True
     except Exception:
-        return False
+        result = False
+    with _net_check_lock:
+        _net_check_cached = result
+        _net_check_at = time.monotonic()
+    return result
 
 
 class LLMClient:
@@ -46,6 +89,27 @@ class LLMClient:
     We keep the HTTP call synchronous (requests) because Ollama's streaming
     is line-delimited JSON and requests handles that cleanly.
     """
+
+    # How much conversation history we replay to the model.
+    HISTORY_MAX_MESSAGES = 20   # 20 messages ≈ 10 user/assistant turns
+    HISTORY_MAX_CHARS = 4000    # per-message cap so one huge answer can't blow the context
+
+    @classmethod
+    def _history_messages(cls, history: list[dict] | None) -> list[dict]:
+        """Normalize recent conversation turns into OpenAI-style messages.
+
+        Shared by the cloud (messages array) and Ollama (inline text)
+        paths so both providers see the same multi-turn context.
+        """
+        messages: list[dict] = []
+        if not history:
+            return messages
+        for msg in history[-cls.HISTORY_MAX_MESSAGES:]:
+            role = msg.get("role", "user")
+            content = (msg.get("content") or "").strip()
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content[:cls.HISTORY_MAX_CHARS]})
+        return messages
 
     def __init__(self):
         self.cfg = settings.llm
@@ -104,7 +168,9 @@ class LLMClient:
         if not _quick_net_check():
             return "[VISION_OFFLINE] No internet — cannot analyze image with vision model."
 
-        vision_model = getattr(self.cfg, "vision_model", "llama-3.2-11b-vision-preview")
+        # Groq decommissioned llama-3.2-*-vision-preview; qwen3.6-27b is the
+        # current multimodal model (see console.groq.com/docs/vision).
+        vision_model = getattr(self.cfg, "vision_model", "qwen/qwen3.6-27b")
         url = f"{self.base_url.rstrip('/')}/chat/completions"
 
         messages = [
@@ -131,7 +197,7 @@ class LLMClient:
         logger.info(f"Vision API call → model={vision_model}")
 
         try:
-            resp = requests.post(url, json=payload, headers=headers, timeout=30)
+            resp = _session.post(url, json=payload, headers=headers, timeout=30)
             resp.raise_for_status()
             resp.encoding = "utf-8"
             data = resp.json()
@@ -147,15 +213,15 @@ class LLMClient:
             # Quick connectivity check — skip cloud if offline (avoids 60s timeout)
             if not _quick_net_check():
                 logger.warning("📡 No internet detected — using local Ollama directly")
-                return self._call_ollama(prompt, system)
+                return self._call_ollama(prompt, system, history)
             try:
                 return self._call_cloud_openai(prompt, system, history)
             except Exception as e:
                 logger.error(f"Cloud provider ({self.provider}) failed: {e}")
                 logger.warning("🔄 FALLING BACK to local Ollama...")
-                return self._call_ollama(prompt, system)
+                return self._call_ollama(prompt, system, history)
         else:
-            return self._call_ollama(prompt, system)
+            return self._call_ollama(prompt, system, history)
 
     def _call_cloud_openai(self, prompt: str, system: str | None, history: list[dict] | None = None) -> str:
         """Call Groq/OpenRouter/DeepSeek API (OpenAI compatible)."""
@@ -164,16 +230,10 @@ class LLMClient:
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
-        
-        # Include conversation history for multi-turn context
-        if history:
-            # Take last 20 messages to stay within context limits
-            for msg in history[-20:]:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if role in ("user", "assistant") and content:
-                    messages.append({"role": role, "content": content})
-        
+
+        # Include recent conversation turns as real role messages
+        messages.extend(self._history_messages(history))
+
         messages.append({"role": "user", "content": prompt})
 
         # Ensure we send the headers for OpenRouter
@@ -194,7 +254,7 @@ class LLMClient:
         
         logger.info(f"Cloud call ({self.provider}) → model={self.model}, prompt_len={len(prompt)}")
 
-        resp = requests.post(
+        resp = _session.post(
             url, json=payload, headers=headers, timeout=self.cfg.timeout_seconds
         )
         resp.raise_for_status()
@@ -208,12 +268,12 @@ class LLMClient:
             logger.error(f"Unexpected response format: {data}")
             raise ValueError(f"Invalid API response: {data}")
 
-    def _call_ollama(self, prompt: str, system: str | None) -> str:
+    def _call_ollama(self, prompt: str, system: str | None, history: list[dict] | None = None) -> str:
         """Blocking HTTP POST to Ollama (Local Fallback)."""
         # Always use the local host/model for fallback
         local_host = getattr(self.cfg, "host", "http://localhost:11434")
         local_model = getattr(self.cfg, "model", "phi3:mini")
-        
+
         # Use a simpler system prompt for local models — they get confused by complex ones
         simple_system = (
             "You are OpenAgent, a helpful AI assistant. "
@@ -221,9 +281,21 @@ class LLMClient:
             "Do not make up conversations or reference past context unless asked. "
             "For greetings, just greet back briefly."
         )
-        
+
+        # /api/generate has no messages array, so replay a few recent
+        # turns as labelled text ahead of the prompt. Kept short (last
+        # 10 messages, tighter per-message cap) — small local models
+        # have small context windows and slow prompt ingestion.
+        recent = self._history_messages(history)[-10:]
+        if recent:
+            convo = "\n".join(
+                f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content'][:1500]}"
+                for m in recent
+            )
+            prompt = f"[RECENT CONVERSATION]\n{convo}\n[END CONVERSATION]\n\n{prompt}"
+
         url = f"{local_host}/api/generate"
-        
+
         payload: dict = {
             "model": local_model,
             "prompt": prompt,
@@ -238,7 +310,7 @@ class LLMClient:
         logger.info(f"Ollama call → model={local_model}, prompt_len={len(prompt)}")
 
         try:
-            resp = requests.post(
+            resp = _session.post(
                 url, json=payload, timeout=self.cfg.timeout_seconds
             )
             resp.raise_for_status()
@@ -274,7 +346,7 @@ class LLMClient:
         if self.provider in ["deepseek", "openrouter", "groq"]:
             if not _quick_net_check():
                 logger.warning("📡 No internet — falling back to Ollama (non-streaming)")
-                yield self._call_ollama(prompt, system)
+                yield self._call_ollama(prompt, system, history)
                 return
             try:
                 yield from self._stream_cloud_openai(prompt, system, history)
@@ -282,10 +354,10 @@ class LLMClient:
             except Exception as e:
                 logger.error(f"Cloud streaming failed: {e}")
                 logger.warning("🔄 FALLING BACK to local Ollama (non-streaming)...")
-                yield self._call_ollama(prompt, system)
+                yield self._call_ollama(prompt, system, history)
                 return
         else:
-            yield self._call_ollama(prompt, system)
+            yield self._call_ollama(prompt, system, history)
 
     def _stream_cloud_openai(self, prompt: str, system: str | None, history: list[dict] | None = None):
         """Streaming call to Groq/OpenRouter — yields tokens as they arrive."""
@@ -295,12 +367,7 @@ class LLMClient:
         if system:
             messages.append({"role": "system", "content": system})
 
-        if history:
-            for msg in history[-20:]:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if role in ("user", "assistant") and content:
-                    messages.append({"role": role, "content": content})
+        messages.extend(self._history_messages(history))
 
         messages.append({"role": "user", "content": prompt})
 
@@ -321,7 +388,7 @@ class LLMClient:
 
         logger.info(f"Cloud STREAM ({self.provider}) → model={self.model}")
 
-        resp = requests.post(
+        resp = _session.post(
             url, json=payload, headers=headers,
             timeout=self.cfg.timeout_seconds, stream=True
         )
@@ -352,10 +419,10 @@ class LLMClient:
                 # Just check root or a known endpoint
                 url = self.base_url.rstrip("/") + "/models"
                 headers = {"Authorization": f"Bearer {self.api_key}"}
-                resp = requests.get(url, headers=headers, timeout=5)
+                resp = _session.get(url, headers=headers, timeout=5)
                 return resp.status_code == 200
             else:
-                resp = requests.get(f"{self.base_url}/api/tags", timeout=3)
+                resp = _session.get(f"{self.base_url}/api/tags", timeout=3)
                 return resp.status_code == 200
         except Exception:
             return False
