@@ -32,6 +32,7 @@ from openagent.tools.offline.run_command import run_sandboxed_command
 from openagent.tools.offline import file_ops
 from openagent.tools.online.web_search import web_search
 from openagent.tools.online.web_fetch import web_fetch
+from openagent.tools.online.lookup import lookup
 from openagent.parsers.unified import parse_file
 
 logger = logging.getLogger("openagent.agent")
@@ -229,6 +230,11 @@ class Agent:
 
         elif tool == ToolName.FILE_OPS:
             return await self._handle_file_ops(ctx, memory_ctx, history)
+
+        elif tool == ToolName.LOOKUP:
+            # Ready-to-render Markdown (links + images) — returned verbatim
+            # so real URLs reach the UI instead of being paraphrased away.
+            return await lookup(ctx.get("query", ctx["prompt"]))
 
         elif tool == ToolName.WEB_SEARCH:
             search_results = await web_search(ctx.get("query", ctx["prompt"]))
@@ -446,5 +452,6 @@ class Agent:
         print("  🔧 run_command    → Execute sandboxed shell commands")
         print("  📂 file_ops       → Read, write, search project files (MCP)")
         print("  🌐 web_search     → Search the web (requires internet)")
+        print("  🛍️  lookup        → Product/visual lookup with links & images")
         print("  🔗 web_fetch      → Fetch and read a webpage (requires internet)")
         print("  ─────────────────────────────────────────────\n")
