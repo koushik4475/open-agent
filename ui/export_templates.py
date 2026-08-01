@@ -211,7 +211,12 @@ def _shaping_available() -> bool:
 def _wrap_script_fonts(s: str) -> str:
     """
     Wrap runs of non-Latin text in <font face="..."> tags so every glyph
-    is drawn by a face that contains it (s must already be XML-escaped).
+    is drawn by a face that contains it. Input is escaped markup (may
+    already contain <b>/<font> tags); tags pass through as hard
+    boundaries so nesting stays balanced. Punctuation, spaces and
+    joiners stick to the current run — a lone ", " between two Kannada
+    fragments would otherwise become a tiny separately-shaped fragment
+    that reportlab renders with the wrong glyph.
     """
     _, table = _ensure_pdf_fonts()
     if not table or all(ord(ch) < 0x0300 for ch in s):
@@ -227,21 +232,37 @@ def _wrap_script_fonts(s: str) -> str:
             out.append(f'<font face="{cur}">{run}</font>' if cur else run)
             buf.clear()
 
-    for ch in s:
-        cp = ord(ch)
-        if cp in (0x200C, 0x200D):  # joiners stay with the current script run
-            buf.append(ch)
+    i, n = 0, len(s)
+    while i < n:
+        ch = s[i]
+        if ch == "<":  # markup tag — emit at top level, outside font spans
+            j = s.find(">", i)
+            j = n - 1 if j == -1 else j
+            flush()
+            cur = None
+            out.append(s[i:j + 1])
+            i = j + 1
             continue
+        if ch == "&":  # XML entity — atomic, sticks to the current run
+            j = s.find(";", i, i + 8)
+            token = s[i:j + 1] if j != -1 else ch
+            buf.append(token)
+            i += len(token)
+            continue
+        cp = ord(ch)
         want = None
         if cp >= 0x0300:
             for name, ranges in table:
                 if any(lo <= cp <= hi for lo, hi in ranges):
                     want = name
                     break
+        if want is None and not ch.isalnum():
+            want = cur  # neutral char: stay in the current script run
         if want != cur:
             flush()
             cur = want
         buf.append(ch)
+        i += 1
     flush()
     return "".join(out)
 
@@ -253,10 +274,9 @@ def _xml_escape(s: str) -> str:
 def _pdf_inline(s: str) -> str:
     """Escaped text → reportlab inline markup for **bold** and `code`."""
     s = _xml_escape(s)
-    s = _wrap_script_fonts(s)
     s = _BOLD_RE.sub(r"<b>\1</b>", s)
     s = _INLINE_CODE_RE.sub(r'<font face="Courier" color="#0E7490">\1</font>', s)
-    return s
+    return _wrap_script_fonts(s)
 
 
 def _pdf_page_decor(canvas, doc) -> None:
