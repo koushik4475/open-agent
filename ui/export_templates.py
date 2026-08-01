@@ -7,8 +7,10 @@ download with an OpenAgent header, accent colors, and light markdown
 rendering (headings, bullets, code fences, **bold**, `inline code`).
 
 Kept free of Flask/agent imports so it can be unit-tested standalone.
-The PDF path embeds NotoSansKannada so non-Latin text (Kannada/Hindi
-etc.) renders instead of empty boxes — same i18n guarantee as before.
+The PDF path embeds one Noto face per script (see _SCRIPT_FONTS) plus
+reportlab's built-in CID fonts for CJK, and switches faces per text run
+so every script renders instead of empty boxes. When uharfbuzz is
+installed, HarfBuzz shaping also fixes Indic conjunct/matra placement.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ _GREY = "#6B7280"
 _CODE_BG = "#F1F5F9"
 _CODE_BORDER = "#CBD5E1"
 
-_FONT_PATH = Path(__file__).resolve().parent / "fonts" / "NotoSansKannada.ttf"
+_FONT_DIR = Path(__file__).resolve().parent / "fonts"
 
 _BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
 _INLINE_CODE_RE = re.compile(r"`([^`]+)`")
@@ -95,6 +97,155 @@ def build_txt(text: str) -> bytes:
 
 
 # ── PDF ─────────────────────────────────────────────────────────
+# ReportLab has no automatic glyph fallback: any character outside the
+# paragraph's font renders as a black box. Each script therefore gets its
+# own embedded Noto face and _wrap_script_fonts() switches faces per run.
+# (registered name, filename in ui/fonts, unicode ranges)
+_SCRIPT_FONTS = [
+    ("NotoDevanagari", "NotoSansDevanagari-Regular.ttf",
+     ((0x0900, 0x097F), (0x1CD0, 0x1CFF), (0xA8E0, 0xA8FF))),
+    ("NotoBengali", "NotoSansBengali-Regular.ttf", ((0x0980, 0x09FF),)),
+    ("NotoGurmukhi", "NotoSansGurmukhi-Regular.ttf", ((0x0A00, 0x0A7F),)),
+    ("NotoGujarati", "NotoSansGujarati-Regular.ttf", ((0x0A80, 0x0AFF),)),
+    ("NotoOriya", "NotoSansOriya-Regular.ttf", ((0x0B00, 0x0B7F),)),
+    ("NotoTamil", "NotoSansTamil-Regular.ttf", ((0x0B80, 0x0BFF),)),
+    ("NotoTelugu", "NotoSansTelugu-Regular.ttf", ((0x0C00, 0x0C7F),)),
+    ("NotoKannada", "NotoSansKannada.ttf", ((0x0C80, 0x0CFF),)),
+    ("NotoMalayalam", "NotoSansMalayalam-Regular.ttf", ((0x0D00, 0x0D7F),)),
+    ("NotoArabic", "NotoSansArabic-Regular.ttf",
+     ((0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF),
+      (0xFB50, 0xFDFF), (0xFE70, 0xFEFF))),
+]
+
+# CJK uses reportlab's built-in CID fonts — no TTF shipped. Kana and hangul
+# must precede the Han ranges: first match wins in _wrap_script_fonts().
+_CID_FONTS = [
+    ("HeiseiKakuGo-W5", ((0x3040, 0x30FF), (0x31F0, 0x31FF))),
+    ("HYSMyeongJo-Medium", ((0x1100, 0x11FF), (0x3130, 0x318F), (0xAC00, 0xD7AF))),
+    ("STSong-Light", ((0x2E80, 0x9FFF), (0x3400, 0x4DBF), (0xF900, 0xFAFF))),
+]
+
+_font_table: list[tuple[str, tuple[tuple[int, int], ...]]] | None = None
+_base_font = "Helvetica"
+_shaping: bool | None = None
+
+
+def _ensure_pdf_fonts() -> tuple[str, list[tuple[str, tuple[tuple[int, int], ...]]]]:
+    """Register every available font once; return (base_font, script table)."""
+    global _font_table, _base_font
+    if _font_table is not None:
+        return _base_font, _font_table
+
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    registered = set(pdfmetrics.getRegisteredFontNames())
+    table: list[tuple[str, tuple[tuple[int, int], ...]]] = []
+    for name, filename, ranges in _SCRIPT_FONTS:
+        path = _FONT_DIR / filename
+        if not path.exists():
+            logger.warning("%s missing — %s text will not render in PDFs",
+                           filename, name)
+            continue
+        try:
+            if name not in registered:
+                # Map every family variant to the same face so <b>/<i>
+                # markup never crashes on a missing bold variant.
+                pdfmetrics.registerFont(TTFont(name, str(path)))
+                pdfmetrics.registerFontFamily(name, normal=name, bold=name,
+                                              italic=name, boldItalic=name)
+            table.append((name, ranges))
+        except Exception:
+            logger.exception("Could not register font %s", filename)
+
+    for name, ranges in _CID_FONTS:
+        try:
+            if name not in registered:
+                pdfmetrics.registerFont(UnicodeCIDFont(name))
+            table.append((name, ranges))
+        except Exception:
+            logger.exception("Could not register CID font %s", name)
+
+    base = "Helvetica"
+    try:
+        regular = _FONT_DIR / "NotoSans-Regular.ttf"
+        bold = _FONT_DIR / "NotoSans-Bold.ttf"
+        if regular.exists():
+            if "NotoSans" not in registered:
+                pdfmetrics.registerFont(TTFont("NotoSans", str(regular)))
+                bold_name = "NotoSans"
+                if bold.exists():
+                    pdfmetrics.registerFont(TTFont("NotoSans-Bold", str(bold)))
+                    bold_name = "NotoSans-Bold"
+                pdfmetrics.registerFontFamily(
+                    "NotoSans", normal="NotoSans", bold=bold_name,
+                    italic="NotoSans", boldItalic=bold_name)
+            base = "NotoSans"
+        elif any(name == "NotoKannada" for name, _ in table):
+            base = "NotoKannada"  # legacy single-font behaviour
+    except Exception:
+        logger.exception("Could not register NotoSans")
+
+    if base == "Helvetica":
+        logger.warning("No Noto fonts available — PDF export falls back to Latin-only")
+
+    _base_font, _font_table = base, table
+    return base, table
+
+
+def _shaping_available() -> bool:
+    """HarfBuzz shaping fixes Indic conjunct/matra placement; optional dep."""
+    global _shaping
+    if _shaping is None:
+        try:
+            import uharfbuzz  # noqa: F401
+            _shaping = True
+        except ImportError:
+            _shaping = False
+            logger.warning("uharfbuzz not installed — complex-script text may "
+                           "render with misplaced vowel signs in PDFs")
+    return _shaping
+
+
+def _wrap_script_fonts(s: str) -> str:
+    """
+    Wrap runs of non-Latin text in <font face="..."> tags so every glyph
+    is drawn by a face that contains it (s must already be XML-escaped).
+    """
+    _, table = _ensure_pdf_fonts()
+    if not table or all(ord(ch) < 0x0300 for ch in s):
+        return s
+
+    out: list[str] = []
+    cur: str | None = None
+    buf: list[str] = []
+
+    def flush() -> None:
+        if buf:
+            run = "".join(buf)
+            out.append(f'<font face="{cur}">{run}</font>' if cur else run)
+            buf.clear()
+
+    for ch in s:
+        cp = ord(ch)
+        if cp in (0x200C, 0x200D):  # joiners stay with the current script run
+            buf.append(ch)
+            continue
+        want = None
+        if cp >= 0x0300:
+            for name, ranges in table:
+                if any(lo <= cp <= hi for lo, hi in ranges):
+                    want = name
+                    break
+        if want != cur:
+            flush()
+            cur = want
+        buf.append(ch)
+    flush()
+    return "".join(out)
+
+
 def _xml_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -102,6 +253,7 @@ def _xml_escape(s: str) -> str:
 def _pdf_inline(s: str) -> str:
     """Escaped text → reportlab inline markup for **bold** and `code`."""
     s = _xml_escape(s)
+    s = _wrap_script_fonts(s)
     s = _BOLD_RE.sub(r"<b>\1</b>", s)
     s = _INLINE_CODE_RE.sub(r'<font face="Courier" color="#0E7490">\1</font>', s)
     return s
@@ -146,27 +298,17 @@ def build_pdf(text: str) -> bytes:
     from reportlab.platypus import (HRFlowable, Paragraph, SimpleDocTemplate,
                                     Spacer)
 
-    # Unicode font (Latin + Kannada). Map every family variant to the same
-    # face so <b>/<i> markup never crashes on a missing bold variant.
-    base_font = "Helvetica"
-    try:
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
-
-        if "NotoKannada" not in pdfmetrics.getRegisteredFontNames():
-            pdfmetrics.registerFont(TTFont("NotoKannada", str(_FONT_PATH)))
-            pdfmetrics.registerFontFamily(
-                "NotoKannada", normal="NotoKannada", bold="NotoKannada",
-                italic="NotoKannada", boldItalic="NotoKannada")
-        base_font = "NotoKannada"
-    except Exception:
-        logger.warning("Noto font unavailable — PDF export falls back to Latin-only")
+    # Per-script Unicode fonts; runs are wrapped by _wrap_script_fonts().
+    base_font, _ = _ensure_pdf_fonts()
+    shaping = 1 if _shaping_available() else 0
 
     styles = getSampleStyleSheet()
     body = ParagraphStyle("OABody", parent=styles["Normal"], fontName=base_font,
-                          fontSize=10.5, leading=15, textColor=HexColor("#1F2937"))
+                          fontSize=10.5, leading=15, textColor=HexColor("#1F2937"),
+                          shaping=shaping)
     title = ParagraphStyle("OATitle", parent=styles["Title"], fontName=base_font,
-                           fontSize=20, textColor=HexColor(_DARK), spaceAfter=2)
+                           fontSize=20, textColor=HexColor(_DARK), spaceAfter=2,
+                           shaping=shaping)
     meta = ParagraphStyle("OAMeta", parent=body, fontSize=8.5,
                           textColor=HexColor(_GREY))
     heads = {
@@ -179,6 +321,7 @@ def build_pdf(text: str) -> bytes:
     }
     bullet = ParagraphStyle("OABullet", parent=body, leftIndent=16, bulletIndent=6)
     code = ParagraphStyle("OACode", parent=styles["Code"], fontName="Courier",
+                          shaping=shaping,
                           fontSize=8.5, leading=11.5, backColor=HexColor(_CODE_BG),
                           borderColor=HexColor(_CODE_BORDER), borderWidth=0.5,
                           borderPadding=6, textColor=HexColor(_DARK),
@@ -202,7 +345,8 @@ def build_pdf(text: str) -> bytes:
         elif kind == "number":
             story.append(Paragraph(_pdf_inline(str(content)), bullet, bulletText="–"))
         elif kind == "code":
-            joined = "<br/>".join(_xml_escape(ln) or " " for ln in content)
+            joined = "<br/>".join(_wrap_script_fonts(_xml_escape(ln)) or " "
+                                   for ln in content)
             story.append(Paragraph(joined or " ", code))
         else:
             story.append(Paragraph(_pdf_inline(str(content)), body))

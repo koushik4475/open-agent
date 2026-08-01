@@ -17,7 +17,8 @@ PyMuPDF>=1.23.0        # PDF → text (import as fitz)
 python-docx>=1.0.0     # DOCX → text
 
 # ─── Document Export ───────────────────────
-reportlab>=4.0.0       # response → PDF (with embedded Unicode font)
+reportlab>=4.0.0       # response → PDF (with embedded Unicode fonts)
+uharfbuzz>=0.39.0      # HarfBuzz shaping so Indic conjuncts/matras render correctly
 
 # ─── Vision / OCR ──────────────────────────
 Pillow>=10.0.0
