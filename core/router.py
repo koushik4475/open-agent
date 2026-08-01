@@ -31,6 +31,7 @@ class ToolName(str, Enum):
     FILE_OPS = "file_ops"
     WEB_SEARCH = "web_search"
     WEB_FETCH = "web_fetch"
+    LOOKUP = "lookup"
     GENERAL = "general"
 
 
@@ -42,6 +43,14 @@ _SEARCH_KEYWORDS = {
     "current", "news", "today", "web", "internet", "search for",
     "who is", "who was", "tell me about", "info on", "biography of",
     "history of", "price of", "stock", "weather", "latest on",
+}
+
+_LOOKUP_KEYWORDS = {
+    "lookup", "look up", "image of", "images of", "picture of",
+    "pictures of", "photo of", "photos of", "show image", "show images",
+    "show picture", "show pictures", "with image", "with images",
+    "with picture", "with pictures", "with photo", "with photos",
+    "product", "products",
 }
 
 _FETCH_KEYWORDS = {
@@ -151,6 +160,16 @@ async def route(user_input: str) -> tuple[ToolName, dict]:
                 "offline_warning": "Web fetch requires internet. You are currently offline."
             }
         return ToolName.WEB_FETCH, {"url": url, "prompt": text}
+
+    # ── 4b. Product/visual lookup (links + images) ────────────
+    if any(kw in text_lower for kw in _LOOKUP_KEYWORDS):
+        online = await check_connectivity()
+        if not online:
+            return ToolName.GENERAL, {
+                "prompt": text,
+                "offline_warning": "Lookup requires internet. You are currently offline."
+            }
+        return ToolName.LOOKUP, {"query": text, "prompt": text}
 
     # ── 5. Web search keywords ────────────────────────────────
     if any(kw in text_lower for kw in _SEARCH_KEYWORDS):

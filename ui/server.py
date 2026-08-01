@@ -343,6 +343,7 @@ TOOL_REGISTRY = [
     {"name": "run_command", "icon": "🔧", "description": "Execute sandboxed shell commands", "category": "offline"},
     {"name": "file_ops", "icon": "📂", "description": "Read, write, search and fix project files (MCP)", "category": "offline"},
     {"name": "web_search", "icon": "🌐", "description": "Search the web via DuckDuckGo", "category": "online"},
+    {"name": "lookup", "icon": "🛍️", "description": "Look up products/topics and show links with images", "category": "online"},
     {"name": "web_fetch", "icon": "🔗", "description": "Fetch and read a webpage", "category": "online"},
 ]
 

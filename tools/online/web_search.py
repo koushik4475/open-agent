@@ -23,7 +23,10 @@ import logging
 import time
 import asyncio
 
-from duckduckgo_search import DDGS
+try:
+    from duckduckgo_search import DDGS
+except ImportError:  # package renamed duckduckgo-search → ddgs after v7
+    from ddgs import DDGS
 
 from openagent.config import settings
 
