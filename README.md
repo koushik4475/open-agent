@@ -1,3 +1,7 @@
+# OpenAgent | Open-Source AI Agent Application and Tool-Using Assistant
+
+OpenAgent is an AI-agent application project with a web-based interface and a Python runtime. The repository documents its agent workflow, available tools, system architecture, and deployment-oriented quick start. It is a starting point for developers exploring AI assistants, tool-using agents, and interactive agent interfaces; review the configured model and tool permissions before connecting it to external systems.
+
 ---
 title: Openagent
 emoji: 🤖
