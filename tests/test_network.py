@@ -4,7 +4,7 @@ Tests for the network connectivity checker.
 """
 
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 
 from openagent.core.network import check_connectivity, reset_connectivity_cache
 
@@ -38,3 +38,30 @@ class TestNetworkCheck:
         """When TCP ping succeeds, we're online."""
         result = await check_connectivity()
         assert result is True
+
+    @pytest.mark.asyncio
+    @patch("openagent.core.network._tcp_ping", return_value=None)
+    async def test_reuses_cached_result_within_ttl(self, mock_ping):
+        """A second check within the TTL avoids another TCP probe."""
+        assert await check_connectivity() is True
+        assert await check_connectivity() is True
+        mock_ping.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("openagent.core.network._tcp_ping", return_value=None)
+    async def test_force_refresh_bypasses_cache(self, mock_ping):
+        """force_refresh probes again even when a fresh result is cached."""
+        assert await check_connectivity() is True
+        assert await check_connectivity(force_refresh=True) is True
+        assert mock_ping.call_count == 2
+
+    @pytest.mark.asyncio
+    @patch("openagent.core.network.time.monotonic")
+    @patch("openagent.core.network._tcp_ping", return_value=None)
+    async def test_expired_cache_is_reprobed(self, mock_ping, mock_clock):
+        """Cached results expire after the configured TTL."""
+        mock_clock.return_value = 100.0
+        assert await check_connectivity() is True
+        mock_clock.return_value = 131.0
+        assert await check_connectivity() is True
+        assert mock_ping.call_count == 2
