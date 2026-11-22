@@ -30,6 +30,12 @@ class TestTxtParser:
         result = txt_parser.extract_text(f)
         assert "caf" in result
 
+    def test_rejects_binary_payload(self, tmp_path):
+        f = tmp_path / "binary.txt"
+        f.write_bytes(b"header\x00\x01payload")
+        with pytest.raises(ValueError, match="binary file"):
+            txt_parser.extract_text(f)
+
     def test_file_not_found(self):
         with pytest.raises(FileNotFoundError):
             txt_parser.extract_text(Path("/nonexistent/file.txt"))
