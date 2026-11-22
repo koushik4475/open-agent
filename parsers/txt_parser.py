@@ -18,6 +18,12 @@ def extract_text(filepath: Path) -> str:
     if not filepath.exists():
         raise FileNotFoundError(f"TXT not found: {filepath}")
 
+    # Reject obvious binary payloads instead of silently turning arbitrary
+    # bytes into Latin-1 characters. UTF-16 is intentionally not supported.
+    with filepath.open("rb") as file:
+        if b"\x00" in file.read(8192):
+            raise ValueError(f"'{filepath.name}' appears to be a binary file, not plain text.")
+
     # Try UTF-8 first (most common), fall back to Latin-1 (never fails)
     for encoding in ("utf-8", "latin-1"):
         try:
